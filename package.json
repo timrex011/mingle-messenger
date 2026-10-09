@@ -1,0 +1,33 @@
+{
+  "name": "messenger-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A secure, email-based real-time messenger",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "node server/src/index.js",
+    "dev": "node --watch server/src/index.js",
+    "build": "npm run build --prefix client",
+    "email:test": "node server/src/email-check.js",
+    "desktop:dev": "npm --prefix desktop run dev",
+    "desktop:dist": "npm run build && npm --prefix desktop run dist",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.16",
+    "socket.io": "^4.8.1"
+  }
+}

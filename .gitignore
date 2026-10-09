@@ -1,0 +1,7 @@
+node_modules/
+.env
+data/
+client/dist/
+desktop/app-url.json
+release/
+npm-debug.log*
