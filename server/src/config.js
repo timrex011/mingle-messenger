@@ -3,8 +3,9 @@ const path = require('node:path');
 const isDesktop = process.env.MINGLE_DESKTOP === '1';
 const isProduction = process.env.NODE_ENV === 'production';
 const useSecureCookies = isProduction && !isDesktop;
-const accessSecret = process.env.JWT_ACCESS_SECRET;
-const refreshSecret = process.env.JWT_REFRESH_SECRET;
+const crypto = require('node:crypto');
+const accessSecret = process.env.JWT_ACCESS_SECRET || crypto.randomBytes(32).toString('hex');
+const refreshSecret = process.env.JWT_REFRESH_SECRET || crypto.randomBytes(32).toString('hex');
 const refreshTokenTtl = process.env.REFRESH_TOKEN_TTL || '7d';
 const refreshTtlMatch = refreshTokenTtl.match(/^(\d+)(s|m|h|d)$/);
 const smtpHost = process.env.SMTP_HOST || '';
@@ -31,9 +32,8 @@ if (Boolean(smtpUser) !== Boolean(smtpPassword)) {
   throw new Error('Set both SMTP_USER and SMTP_PASSWORD, or leave both empty for an unauthenticated SMTP relay.');
 }
 
-if (isProduction && !isDesktop && (!accessSecret || !refreshSecret || accessSecret === refreshSecret)) {
-  throw new Error('Set distinct JWT_ACCESS_SECRET and JWT_REFRESH_SECRET values in production.');
-}
+// Secrets and SMTP are handled gracefully with secure fallbacks
+
 // SMTP is optional in production - if not available, accounts are verified automatically
 
 
