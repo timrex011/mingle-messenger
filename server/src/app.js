@@ -1,5 +1,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
+const { authenticator } = require('otplib');
+const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -89,6 +91,7 @@ function publicUser(row) {
     username: row.username,
     age: row.age,
     emailVerified: Boolean(row.email_verified),
+    totpEnabled: Boolean(row.totp_enabled),
     avatarUrl: row.avatar_url,
     createdAt: row.created_at
   };
@@ -310,10 +313,116 @@ authRouter.post('/login', authLimiter, asyncRoute(async (req, res) => {
     return;
   }
 
+  // If 2FA is enabled, issue a short-lived temp token instead of a full session
+  if (user.totp_enabled) {
+    const jwt = require('jsonwebtoken');
+    const tempToken = jwt.sign(
+      { sub: user.id, type: 'totp_pending' },
+      config.accessSecret,
+      { expiresIn: '5m' }
+    );
+    res.json({ twoFactorRequired: true, tempToken });
+    return;
+  }
+
   db.prepare(`
     UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?
   `).run(user.id);
   res.json(issueSession(user, res));
+}));
+
+// ── 2FA: verify TOTP code after password login ──────────────────────────────
+authRouter.post('/2fa/verify', authLimiter, asyncRoute(async (req, res) => {
+  const { tempToken, code } = req.body;
+  if (typeof tempToken !== 'string' || typeof code !== 'string') {
+    res.status(400).json({ error: 'Ungültige Anfrage.' });
+    return;
+  }
+  let claims;
+  try {
+    const jwt = require('jsonwebtoken');
+    claims = jwt.verify(tempToken, config.accessSecret);
+  } catch {
+    res.status(401).json({ error: 'Sitzung abgelaufen. Bitte melde dich erneut an.' });
+    return;
+  }
+  if (claims.type !== 'totp_pending') {
+    res.status(401).json({ error: 'Ungültiger Token-Typ.' });
+    return;
+  }
+  const user = db.prepare('SELECT * FROM users WHERE id = ? AND email_verified = 1 AND totp_enabled = 1').get(claims.sub);
+  if (!user) {
+    res.status(401).json({ error: 'Konto nicht gefunden oder 2FA nicht aktiviert.' });
+    return;
+  }
+  const isValid = authenticator.verify({ token: code.replace(/\s/g, ''), secret: user.totp_secret });
+  if (!isValid) {
+    res.status(401).json({ error: 'Der Authentifizierungscode ist ungültig oder abgelaufen.' });
+    return;
+  }
+  db.prepare('UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+  res.json(issueSession(user, res));
+}));
+
+// ── 2FA: setup – generate secret and QR code ────────────────────────────────
+authRouter.post('/2fa/setup', requireAuth, asyncRoute(async (req, res) => {
+  const user = db.prepare('SELECT id, email, username, totp_enabled FROM users WHERE id = ?').get(req.auth.sub);
+  if (user.totp_enabled) {
+    res.status(409).json({ error: '2FA ist bereits aktiviert.' });
+    return;
+  }
+  const secret = authenticator.generateSecret();
+  const otpauthUrl = authenticator.keyuri(user.username, 'mingle', secret);
+  const qrDataUrl = await QRCode.toDataURL(otpauthUrl);
+  // Store secret temporarily (not yet enabled)
+  db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(secret, user.id);
+  res.json({ secret, qrDataUrl });
+}));
+
+// ── 2FA: enable – verify first code and activate 2FA ────────────────────────
+authRouter.post('/2fa/enable', requireAuth, asyncRoute(async (req, res) => {
+  const { code } = req.body;
+  if (typeof code !== 'string') {
+    res.status(400).json({ error: 'Code erforderlich.' });
+    return;
+  }
+  const user = db.prepare('SELECT id, totp_secret, totp_enabled FROM users WHERE id = ?').get(req.auth.sub);
+  if (user.totp_enabled) {
+    res.status(409).json({ error: '2FA ist bereits aktiviert.' });
+    return;
+  }
+  if (!user.totp_secret) {
+    res.status(400).json({ error: 'Bitte starte zuerst die 2FA-Einrichtung.' });
+    return;
+  }
+  const isValid = authenticator.verify({ token: code.replace(/\s/g, ''), secret: user.totp_secret });
+  if (!isValid) {
+    res.status(401).json({ error: 'Ungültiger Code. Bitte versuche es erneut.' });
+    return;
+  }
+  db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(user.id);
+  res.json({ message: '2FA wurde erfolgreich aktiviert.' });
+}));
+
+// ── 2FA: disable – deactivate 2FA with password confirmation ────────────────
+authRouter.post('/2fa/disable', requireAuth, asyncRoute(async (req, res) => {
+  const { password } = req.body;
+  if (typeof password !== 'string') {
+    res.status(400).json({ error: 'Passwort erforderlich.' });
+    return;
+  }
+  const user = db.prepare('SELECT id, password_hash, totp_enabled FROM users WHERE id = ?').get(req.auth.sub);
+  if (!user.totp_enabled) {
+    res.status(400).json({ error: '2FA ist nicht aktiviert.' });
+    return;
+  }
+  const passwordMatches = await bcrypt.compare(password, user.password_hash);
+  if (!passwordMatches) {
+    res.status(401).json({ error: 'Falsches Passwort.' });
+    return;
+  }
+  db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').run(user.id);
+  res.json({ message: '2FA wurde deaktiviert.' });
 }));
 
 authRouter.post('/refresh', (req, res) => {

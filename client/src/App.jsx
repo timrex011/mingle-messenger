@@ -147,6 +147,8 @@ function AuthPage({ onSession, initialMode = 'login' }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [canResendVerification, setCanResendVerification] = useState(false);
+  const [twoFactor, setTwoFactor] = useState(null);
+  const [totpCode, setTotpCode] = useState('');
 
   function update(event) {
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -176,7 +178,13 @@ function AuthPage({ onSession, initialMode = 'login' }) {
           method: 'POST',
           body: { identifier: form.email, password: form.password }
         });
-        onSession(result);
+        if (result.twoFactorRequired) {
+          setTwoFactor({ tempToken: result.tempToken });
+          setTotpCode('');
+          setError('');
+        } else {
+          onSession(result);
+        }
       }
     } catch (requestError) {
       setError(requestError.message);
@@ -203,8 +211,77 @@ function AuthPage({ onSession, initialMode = 'login' }) {
     }
   }
 
+  async function verifyTotp(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const result = await request('/auth/2fa/verify', {
+        method: 'POST',
+        body: { tempToken: twoFactor.tempToken, code: totpCode }
+      });
+      onSession(result);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const isRegister = mode === 'register';
   const isForgot = mode === 'forgot';
+
+  if (twoFactor) {
+    return (
+      <main className="auth-page">
+        <section className="auth-art">
+          <div className="auth-art-top"><Brand /></div>
+          <div className="art-orbit orbit-one" />
+          <div className="art-orbit orbit-two" />
+          <div className="art-card card-back"><span className="mini-avatar coral">M</span><span className="card-line long" /><span className="card-line short" /></div>
+          <div className="art-card card-front">
+            <div className="art-chat-head"><span className="mini-avatar blue">L</span><div><b>Lea</b><small>gerade online</small></div><span className="online-dot static" /></div>
+            <div className="art-bubble incoming">Bin gleich da! <small>14:32</small></div>
+            <div className="art-bubble outgoing">Perfekt, bis gleich ✨ <small>14:33　✓✓</small></div>
+            <div className="art-input"><span>Nachricht schreiben …</span><i><Send size={14} /></i></div>
+          </div>
+          <div className="art-copy">
+            <span className="eyebrow">DEIN PLATZ FÜR GUTE GESPRÄCHE</span>
+            <h1>In Verbindung.<br /><em>Ganz bei dir.</em></h1>
+            <p>Teile Momente, Gedanken und alles dazwischen — einfach und sicher.</p>
+            <div className="art-trust"><ShieldCheck size={17} /> Privat. Sicher. Ohne Telefonnummer.</div>
+          </div>
+          <div className="art-footer"><span>© 2026 mingle</span><span>Mit Ruhe verbunden</span></div>
+        </section>
+        <section className="auth-panel">
+          <div className="mobile-brand"><Brand /></div>
+          <div className="auth-content">
+            <div className="auth-heading">
+              <span className="auth-kicker">ZWEI-FAKTOR-AUTHENTIFIZIERUNG</span>
+              <h2>Code eingeben</h2>
+              <p>Öffne deine Authenticator-App und gib den 6-stelligen Code ein.</p>
+            </div>
+            <form className="auth-form" onSubmit={verifyTotp}>
+              <label className="field">
+                <span>Authenticator-Code</span>
+                <div className="input-wrap"><ShieldCheck size={17} /><input name="totpCode" value={totpCode} onChange={(e) => { setTotpCode(e.target.value); setError(''); }} placeholder="000 000" maxLength="7" autoComplete="one-time-code" inputMode="numeric" autoFocus required /></div>
+              </label>
+              {error && <div className="form-message error" role="alert">{error}</div>}
+              <button className="button button-primary auth-submit" type="submit" disabled={busy}>
+                {busy ? 'Wird überprüft …' : 'Bestätigen'}
+                {!busy && <ArrowRight size={17} />}
+              </button>
+            </form>
+            <div className="auth-links">
+              <button className="text-button" onClick={() => { setTwoFactor(null); setError(''); setTotpCode(''); }}><ArrowLeft size={15} /> Zurück zur Anmeldung</button>
+            </div>
+            <div className="auth-assurance"><ShieldCheck size={16} /><span>Der Code wird von deiner Authenticator-App generiert.</span></div>
+          </div>
+          <div className="auth-panel-footer"><button><CircleHelp size={15} /> Hilfe &amp; Datenschutz</button><span>Deutsch <ChevronDown size={13} /></span></div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="auth-page">
@@ -381,6 +458,9 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [totpSetup, setTotpSetup] = useState(null);
+  const [totpCode, setTotpCode] = useState('');
+  const [disablePassword, setDisablePassword] = useState('');
 
   async function saveProfile(event) {
     event.preventDefault();
@@ -460,6 +540,52 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
           <label className="field"><span>Neues Passwort</span><input className="plain-input" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength="8" maxLength="128" autoComplete="new-password" required /></label>
           <button className="button button-dark" disabled={busy}>Passwort aktualisieren</button>
         </form>
+      </section>
+      <section className="settings-card">
+        <div className="settings-card-title"><span className="settings-icon mint"><ShieldCheck size={18} /></span><div><h2>Zwei-Faktor-Authentifizierung</h2><p>{user.totpEnabled ? '2FA ist aktiv – dein Konto ist extra geschützt.' : 'Schütze dein Konto mit einer Authenticator-App.'}</p></div></div>
+        {!user.totpEnabled && !totpSetup && (
+          <div className="settings-form">
+            <button className="button button-dark" disabled={busy} onClick={async () => {
+              setBusy(true); setError(''); setMessage('');
+              try {
+                const result = await request('/auth/2fa/setup', { method: 'POST', token, onToken });
+                setTotpSetup(result);
+              } catch (e) { setError(e.message); } finally { setBusy(false); }
+            }}>2FA einrichten</button>
+          </div>
+        )}
+        {!user.totpEnabled && totpSetup && (
+          <div className="settings-form">
+            <p style={{fontSize:'0.92rem',color:'var(--text-muted)',marginBottom:12}}>Scanne den QR-Code mit deiner Authenticator-App (Google Authenticator, Authy, etc.):</p>
+            <div style={{textAlign:'center',margin:'12px 0'}}><img src={totpSetup.qrDataUrl} alt="2FA QR-Code" style={{width:200,height:200,borderRadius:12,border:'1px solid var(--border)'}} /></div>
+            <p style={{fontSize:'0.8rem',color:'var(--text-muted)',wordBreak:'break-all',textAlign:'center',margin:'0 0 16px'}}>Manueller Schlüssel: <code style={{background:'var(--surface-hover)',padding:'2px 6px',borderRadius:6}}>{totpSetup.secret}</code></p>
+            <form onSubmit={async (e) => {
+              e.preventDefault(); setBusy(true); setError(''); setMessage('');
+              try {
+                const result = await request('/auth/2fa/enable', { method: 'POST', token, onToken, body: { code: totpCode } });
+                setMessage(result.message);
+                setTotpSetup(null); setTotpCode('');
+                onUserChange({ ...user, totpEnabled: true });
+              } catch (e) { setError(e.message); } finally { setBusy(false); }
+            }}>
+              <label className="field"><span>6-stelliger Code aus der App</span><input className="plain-input" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
+              <button className="button button-dark" disabled={busy}>{busy ? 'Wird überprüft …' : '2FA aktivieren'}</button>
+            </form>
+          </div>
+        )}
+        {user.totpEnabled && (
+          <form className="settings-form" onSubmit={async (e) => {
+            e.preventDefault(); setBusy(true); setError(''); setMessage('');
+            try {
+              const result = await request('/auth/2fa/disable', { method: 'POST', token, onToken, body: { password: disablePassword } });
+              setMessage(result.message); setDisablePassword('');
+              onUserChange({ ...user, totpEnabled: false });
+            } catch (e) { setError(e.message); } finally { setBusy(false); }
+          }}>
+            <label className="field"><span>Passwort bestätigen</span><input className="plain-input" type="password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} autoComplete="current-password" required /></label>
+            <button className="button button-danger" disabled={busy}>2FA deaktivieren</button>
+          </form>
+        )}
       </section>
       <section className="settings-card danger-card">
         <div className="settings-card-title"><span className="settings-icon rose"><X size={18} /></span><div><h2>Konto löschen</h2><p>Diese Aktion kann nicht rückgängig gemacht werden.</p></div></div>

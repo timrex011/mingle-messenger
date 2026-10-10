@@ -14,5 +14,11 @@ const userColumns = db.pragma('table_info(users)');
 if (!userColumns.some((column) => column.name === 'auth_version')) {
   db.exec('ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0 CHECK (auth_version >= 0)');
 }
+if (!userColumns.some((column) => column.name === 'totp_secret')) {
+  db.exec('ALTER TABLE users ADD COLUMN totp_secret TEXT');
+}
+if (!userColumns.some((column) => column.name === 'totp_enabled')) {
+  db.exec('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0 CHECK (totp_enabled IN (0, 1))');
+}
 
 module.exports = db;
