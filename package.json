@@ -11,7 +11,7 @@
     "build": "npm run build --prefix client",
     "email:test": "node server/src/email-check.js",
     "desktop:dev": "electron .",
-    "desktop:dist": "npm run build && node desktop/prepare-runtime.cjs && electron-builder --win --x64",
+    "desktop:dist": "npm run build && node desktop/prepare-runtime.cjs && node desktop/build-integrity.cjs && electron-builder --win nsis --x64",
     "test": "node --test"
   },
   "devDependencies": {
@@ -31,6 +31,8 @@
       "desktop/preload.cjs",
       "desktop/connect.html",
       "desktop/integrity.json",
+      "desktop/icon.ico",
+      "desktop/icon.png",
       "package.json",
       "!node_modules/**"
     ],
@@ -48,16 +50,11 @@
       }
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "icon": "desktop/icon.ico",
+      "signExecutable": false,
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
           "arch": [
             "x64"
           ]
@@ -73,10 +70,10 @@
       "shortcutName": "Mingle",
       "uninstallDisplayName": "Mingle",
       "deleteAppDataOnUninstall": false,
+      "installerIcon": "desktop/icon.ico",
+      "uninstallerIcon": "desktop/icon.ico",
+      "installerHeaderIcon": "desktop/icon.ico",
       "artifactName": "Mingle-Setup-${version}.exe"
-    },
-    "portable": {
-      "artifactName": "Mingle-Portable-${version}.exe"
     }
   },
   "engines": {

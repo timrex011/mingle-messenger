@@ -3,7 +3,7 @@ const path = require('node:path');
 
 const result = spawnSync(
   process.platform === 'win32' ? 'npx.cmd' : 'npx',
-  ['electron-builder', '--win', 'nsis', 'portable', '--x64'],
+  ['electron-builder', '--win', 'nsis', '--x64'],
   {
     cwd: path.join(__dirname, '..'),
     stdio: 'inherit',

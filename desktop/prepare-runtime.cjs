@@ -7,7 +7,14 @@ const dest = path.join(__dirname, 'runtime-bundle');
 const releaseConfig = path.join(__dirname, 'release-config.json');
 const rootPackage = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
-const webUrl = (process.env.MINGLE_WEB_URL || '').trim();
+const defaultWebUrl = 'https://mingle-messenger-q6zt.onrender.com';
+let existingWebUrl = '';
+if (fs.existsSync(releaseConfig)) {
+  try {
+    existingWebUrl = JSON.parse(fs.readFileSync(releaseConfig, 'utf8')).webUrl || '';
+  } catch {}
+}
+const webUrl = (process.env.MINGLE_WEB_URL || '').trim() || existingWebUrl || defaultWebUrl;
 if (webUrl) {
   let parsed;
   try {
@@ -17,8 +24,6 @@ if (webUrl) {
   }
   if (parsed.protocol !== 'https:') throw new Error('MINGLE_WEB_URL muss mit https:// beginnen.');
   fs.writeFileSync(releaseConfig, `${JSON.stringify({ webUrl: parsed.origin }, null, 2)}\n`);
-} else {
-  fs.rmSync(releaseConfig, { force: true });
 }
 
 fs.rmSync(dest, { recursive: true, force: true });

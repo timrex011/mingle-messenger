@@ -162,14 +162,18 @@ async function loadServiceUrl(url) {
 function setupMenu() {
   Menu.setApplicationMenu(null);
 }
-
 function createWindow() {
+  const iconPath = fs.existsSync(path.join(__dirname, 'icon.png'))
+    ? path.join(__dirname, 'icon.png')
+    : path.join(__dirname, 'icon.ico');
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 400,
     minHeight: 560,
     title: 'Mingle',
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     backgroundColor: '#0b0d13',
     autoHideMenuBar: true,
     webPreferences: {
