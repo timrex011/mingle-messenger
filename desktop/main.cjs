@@ -160,37 +160,7 @@ async function loadServiceUrl(url) {
 }
 
 function setupMenu() {
-  const template = [
-    {
-      label: 'Mingle',
-      submenu: [
-        {
-          label: 'Server wechseln...',
-          accelerator: 'CmdOrCtrl+Shift+S',
-          click: () => showConnectScreen()
-        },
-        { type: 'separator' },
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
-    },
-    {
-      label: 'Bearbeiten',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' }
-      ]
-    }
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(null);
 }
 
 function createWindow() {
@@ -201,13 +171,21 @@ function createWindow() {
     minHeight: 560,
     title: 'Mingle',
     backgroundColor: '#0b0d13',
-    autoHideMenuBar: false,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
       webSecurity: true
+    }
+  });
+
+  mainWindow.setMenuBarVisibility(false);
+
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.control && input.shift && input.key.toLowerCase() === 's') {
+      showConnectScreen();
     }
   });
 
