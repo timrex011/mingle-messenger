@@ -41,8 +41,8 @@ if (isProduction && !isDesktop && (!smtpHost || !process.env.SMTP_FROM)) {
 module.exports = {
   port: parsedPort,
   host: process.env.HOST || (isDesktop ? '127.0.0.1' : '0.0.0.0'),
-  appUrl: (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, ''),
-  clientOrigin: (process.env.CLIENT_ORIGIN || (isDesktop ? process.env.APP_URL : 'http://localhost:5173') || 'http://localhost:5173').replace(/\/+$/, ''),
+  appUrl: (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+  clientOrigin: (process.env.CLIENT_ORIGIN || process.env.RENDER_EXTERNAL_URL || (isDesktop ? process.env.APP_URL : 'http://localhost:5173') || 'http://localhost:5173').replace(/\/+$/, ''),
   databasePath,
   attachmentPath: path.resolve(process.env.ATTACHMENT_PATH || path.join(path.dirname(databasePath), 'uploads')),
   accessSecret: accessSecret || 'development-access-secret-change-before-production',
