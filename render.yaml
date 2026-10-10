@@ -11,7 +11,11 @@ services:
       - key: NODE_ENV
         value: production
       - key: AUTO_VERIFY_EMAIL
-        value: "true"
+        value: "false"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "Mingle <onboarding@resend.dev>"
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET

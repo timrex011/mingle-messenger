@@ -1,8 +1,20 @@
-const nodemailer = require('nodemailer');
 const config = require('./config');
 
-const transporter = config.smtpHost
-  ? nodemailer.createTransport({
+let resendClient = null;
+if (config.resendApiKey) {
+  try {
+    const { Resend } = require('resend');
+    resendClient = new Resend(config.resendApiKey);
+  } catch (err) {
+    console.warn('Resend client initialization error:', err.message);
+  }
+}
+
+let transporter = null;
+if (config.smtpHost) {
+  try {
+    const nodemailer = require('nodemailer');
+    transporter = nodemailer.createTransport({
       host: config.smtpHost,
       port: config.smtpPort,
       secure: config.smtpSecure,
@@ -11,8 +23,11 @@ const transporter = config.smtpHost
       connectionTimeout: 10_000,
       greetingTimeout: 10_000,
       socketTimeout: 20_000
-    })
-  : null;
+    });
+  } catch (err) {
+    console.warn('Nodemailer initialization error:', err.message);
+  }
+}
 
 function escapeHtml(value) {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -25,14 +40,18 @@ function escapeHtml(value) {
 }
 
 async function verifyTransport() {
+  if (resendClient) {
+    return true;
+  }
   if (!transporter) {
-    throw new Error('SMTP is not configured. Set SMTP_HOST and sender settings in .env first.');
+    throw new Error('Weder RESEND_API_KEY noch SMTP_HOST ist konfiguriert.');
   }
   await transporter.verify();
 }
 
 async function sendAccountLink({ email, label, url }) {
-  if (!transporter) {
+  if (!resendClient && !transporter) {
+    // Fallback: log to console (dev mode or no external email service configured)
     console.info(`[${label}] ${url}`);
     if (config.isDesktop) {
       console.info(`MINGLE_ACCOUNT_LINK ${url}`);
@@ -42,12 +61,9 @@ async function sendAccountLink({ email, label, url }) {
 
   const safeLabel = escapeHtml(label);
   const safeUrl = escapeHtml(url);
-  await transporter.sendMail({
-    from: config.smtpFrom,
-    to: email,
-    subject: `${label} – mingle`,
-    text: `${label}\n\nÖffne diesen Link: ${url}\n\nFalls du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.`,
-    html: `<!doctype html>
+  const subject = `${label} – mingle`;
+  const text = `${label}\n\nÖffne diesen Link: ${url}\n\nFalls du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.`;
+  const html = `<!doctype html>
 <html lang="de">
   <body style="margin:0;padding:32px 16px;background:#f4f6fb;font-family:Arial,sans-serif;color:#202638">
     <table role="presentation" style="width:100%;max-width:560px;margin:0 auto;border:1px solid #e8ebf2;border-radius:16px;background:#fff">
@@ -60,28 +76,62 @@ async function sendAccountLink({ email, label, url }) {
       </td></tr>
     </table>
   </body>
-</html>`
-  });
+</html>`;
+
+  if (resendClient) {
+    await resendClient.emails.send({
+      from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
+      to: email,
+      subject,
+      text,
+      html
+    });
+    return;
+  }
+
+  if (transporter) {
+    await transporter.sendMail({
+      from: config.smtpFrom,
+      to: email,
+      subject,
+      text,
+      html
+    });
+  }
 }
 
 async function sendTestEmail() {
+  const recipient = config.smtpTestTo || config.smtpUser || 'test@example.com';
+  const subject = 'mingle – E-Mail-Test';
+  const text = 'Der E-Mail-Versand von mingle ist erfolgreich eingerichtet.';
+  const html = '<p>Der E-Mail-Versand von <strong>mingle</strong> ist erfolgreich eingerichtet.</p>';
+
+  if (resendClient) {
+    await resendClient.emails.send({
+      from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
+      to: recipient,
+      subject,
+      text,
+      html
+    });
+    return;
+  }
+
   if (!transporter) {
-    throw new Error('SMTP is not configured. Set SMTP_HOST and sender settings in .env first.');
+    throw new Error('Weder RESEND_API_KEY noch SMTP_HOST ist konfiguriert.');
   }
-  if (!config.smtpTestTo) {
-    throw new Error('Set SMTP_TEST_TO or SMTP_USER to the mailbox that should receive the test message.');
-  }
+
   await transporter.sendMail({
     from: config.smtpFrom,
-    to: config.smtpTestTo,
-    subject: 'mingle – SMTP-Test',
-    text: 'Der E-Mail-Versand von mingle ist erfolgreich eingerichtet.',
-    html: '<p>Der E-Mail-Versand von <strong>mingle</strong> ist erfolgreich eingerichtet.</p>'
+    to: recipient,
+    subject,
+    text,
+    html
   });
 }
 
 module.exports = {
-  isConfigured: Boolean(transporter),
+  isConfigured: Boolean(resendClient || transporter),
   sendAccountLink,
   sendTestEmail,
   verifyTransport

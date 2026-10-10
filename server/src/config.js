@@ -49,6 +49,8 @@ module.exports = {
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '15m',
   refreshTokenTtl,
   refreshTokenTtlMs: Number(refreshTtlMatch[1]) * { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[refreshTtlMatch[2]],
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  emailFrom: process.env.EMAIL_FROM || process.env.RESEND_FROM || 'Mingle <onboarding@resend.dev>',
   smtpHost,
   smtpPort,
   smtpSecure: smtpSecureValue === 'true',
@@ -59,7 +61,7 @@ module.exports = {
   bcryptRounds: Math.min(Math.max(Number.parseInt(process.env.BCRYPT_ROUNDS || '12', 10), 10), 15),
   serveClient: isProduction || isDesktop || process.env.SERVE_CLIENT === 'true' || require('node:fs').existsSync(path.join(__dirname, '../../client/dist/index.html')),
   useSecureCookies,
-  autoVerifyEmail: isDesktop || process.env.AUTO_VERIFY_EMAIL === 'true' || isProduction,
+  autoVerifyEmail: isDesktop ? true : process.env.AUTO_VERIFY_EMAIL === 'true',
   isDesktop,
   isProduction
 };
