@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
@@ -6,6 +7,40 @@ const path = require('node:path');
 
 let mainWindow;
 let currentServiceUrl = null;
+const TAMPER_SECRET = 'mingle-tamper-seal-v1';
+
+function verifyAppIntegrity() {
+  const integrityPath = path.join(__dirname, 'integrity.json');
+  if (!fs.existsSync(integrityPath)) {
+    return true;
+  }
+
+  try {
+    const manifest = JSON.parse(fs.readFileSync(integrityPath, 'utf8'));
+    for (const [file, expectedHash] of Object.entries(manifest)) {
+      const targetPath = path.join(__dirname, file);
+      if (!fs.existsSync(targetPath)) {
+        throw new Error(`Fehlende Programmdatei: ${file}`);
+      }
+      const actualHash = crypto.createHash('sha256').update(fs.readFileSync(targetPath)).digest('hex');
+      if (actualHash !== expectedHash) {
+        throw new Error(`Integritätsverletzung in Datei: ${file}`);
+      }
+    }
+    return true;
+  } catch (err) {
+    dialog.showErrorBox(
+      'Mingle – Integritätsfehler',
+      `Die Anwendungsdateien wurden nachträglich bearbeitet oder manipuliert.\n\nDetails: ${err.message}\n\nMingle kann aus Sicherheitsgründen nicht gestartet werden. Bitte installiere die offizielle App neu.`
+    );
+    app.exit(1);
+    return false;
+  }
+}
+
+function signData(data) {
+  return crypto.createHmac('sha256', TAMPER_SECRET).update(data).digest('hex');
+}
 
 function getSavedServerUrl() {
   if (process.env.MINGLE_WEB_URL) {
@@ -28,11 +63,28 @@ function getSavedServerUrl() {
     } catch {}
   }
 
-  const userFile = path.join(app.getPath('userData'), 'server-url.txt');
+  const userFile = path.join(app.getPath('userData'), 'server-url.json');
   if (fs.existsSync(userFile)) {
     try {
-      const url = fs.readFileSync(userFile, 'utf8').trim();
-      if (url) return url;
+      const payload = JSON.parse(fs.readFileSync(userFile, 'utf8'));
+      if (payload.url && payload.sig && signData(payload.url) === payload.sig) {
+        return payload.url;
+      }
+      // Tampering detected in settings!
+      console.warn('Signatur der Konfigurationsdatei ungültig (Manipulation erkannt).');
+    } catch {}
+  }
+
+  // Fallback to old plain file if present
+  const oldUserFile = path.join(app.getPath('userData'), 'server-url.txt');
+  if (fs.existsSync(oldUserFile)) {
+    try {
+      const url = fs.readFileSync(oldUserFile, 'utf8').trim();
+      if (url) {
+        saveServerUrl(url);
+        fs.rmSync(oldUserFile, { force: true });
+        return url;
+      }
     } catch {}
   }
 
@@ -40,9 +92,15 @@ function getSavedServerUrl() {
 }
 
 function saveServerUrl(url) {
-  const userFile = path.join(app.getPath('userData'), 'server-url.txt');
+  const userFile = path.join(app.getPath('userData'), 'server-url.json');
+  const cleanUrl = url.trim();
+  const payload = {
+    url: cleanUrl,
+    sig: signData(cleanUrl),
+    savedAt: new Date().toISOString()
+  };
   fs.mkdirSync(path.dirname(userFile), { recursive: true });
-  fs.writeFileSync(userFile, url.trim());
+  fs.writeFileSync(userFile, JSON.stringify(payload, null, 2));
 }
 
 function verifyHealth(targetUrl, timeoutMs = 8000) {
@@ -188,6 +246,7 @@ ipcMain.handle('set-server-url', async (_event, targetUrl) => {
 });
 
 app.whenReady().then(() => {
+  if (!verifyAppIntegrity()) return;
   setupMenu();
   createWindow();
 

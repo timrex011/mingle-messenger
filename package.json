@@ -30,6 +30,7 @@
       "desktop/main.cjs",
       "desktop/preload.cjs",
       "desktop/connect.html",
+      "desktop/integrity.json",
       "package.json",
       "!node_modules/**"
     ],
