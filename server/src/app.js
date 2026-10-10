@@ -175,8 +175,8 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     db.prepare(`
       INSERT INTO users (id, email, username, password_hash, age, email_verified)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, email, username, passwordHash, age, config.isDesktop ? 1 : 0);
-    if (!config.isDesktop) {
+    `).run(id, email, username, passwordHash, age, (config.isDesktop || config.autoVerifyEmail) ? 1 : 0);
+    if (!config.isDesktop && !config.autoVerifyEmail) {
       db.prepare(`
         INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
         VALUES (?, ?, ?)
@@ -194,7 +194,7 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     throw error;
   }
 
-  if (!config.isDesktop) {
+  if (!config.isDesktop && !config.autoVerifyEmail) {
     const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
     try {
       await sendAccountLink({
@@ -213,7 +213,7 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     }
   }
   res.status(201).json({
-    message: config.isDesktop
+    message: (config.isDesktop || config.autoVerifyEmail)
       ? 'Konto erstellt. Du kannst dich jetzt anmelden.'
       : 'Konto erstellt. Bitte bestätige deine E-Mail-Adresse über den zugesandten Link.'
   });

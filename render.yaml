@@ -9,6 +9,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: AUTO_VERIFY_EMAIL
+        value: "true"
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
@@ -17,17 +19,5 @@ services:
         value: ./data/messenger.sqlite
       - key: ATTACHMENT_PATH
         value: ./data/uploads
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_SECURE
-        value: "false"
-      - key: SMTP_USER
-        value: riftduels4@gmail.com
-      - key: SMTP_PASSWORD
-        value: wjxb vxcg embb yoyn
-      - key: SMTP_FROM
-        value: "mingle <riftduels4@gmail.com>"
       - key: BCRYPT_ROUNDS
         value: "12"

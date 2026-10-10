@@ -34,9 +34,8 @@ if (Boolean(smtpUser) !== Boolean(smtpPassword)) {
 if (isProduction && !isDesktop && (!accessSecret || !refreshSecret || accessSecret === refreshSecret)) {
   throw new Error('Set distinct JWT_ACCESS_SECRET and JWT_REFRESH_SECRET values in production.');
 }
-if (isProduction && !isDesktop && (!smtpHost || !process.env.SMTP_FROM)) {
-  throw new Error('Set SMTP_HOST and SMTP_FROM in production to deliver account emails.');
-}
+// SMTP is optional in production - if not available, accounts are verified automatically
+
 
 module.exports = {
   port: parsedPort,
@@ -60,6 +59,7 @@ module.exports = {
   bcryptRounds: Math.min(Math.max(Number.parseInt(process.env.BCRYPT_ROUNDS || '12', 10), 10), 15),
   serveClient: isProduction || isDesktop || process.env.SERVE_CLIENT === 'true' || require('node:fs').existsSync(path.join(__dirname, '../../client/dist/index.html')),
   useSecureCookies,
+  autoVerifyEmail: isDesktop || process.env.AUTO_VERIFY_EMAIL === 'true' || isProduction,
   isDesktop,
   isProduction
 };

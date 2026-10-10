@@ -17,10 +17,14 @@ function publicUrl(addressInfo) {
 
 async function start() {
   if (mailer.isConfigured) {
-    await mailer.verifyTransport();
-    console.info('SMTP-Verbindung erfolgreich geprüft.');
-  } else if (!config.isProduction || config.isDesktop) {
-    console.warn('SMTP ist nicht konfiguriert. Bestätigungs- und Reset-Links erscheinen nur in der Serverkonsole.');
+    try {
+      await mailer.verifyTransport();
+      console.info('SMTP-Verbindung erfolgreich geprüft.');
+    } catch (smtpError) {
+      console.warn('SMTP-Verbindung konnte nicht hergestellt werden (Server startet trotzdem):', smtpError.message);
+    }
+  } else {
+    console.warn('SMTP ist nicht konfiguriert. Links werden in der Konsole ausgegeben.');
   }
 
   await new Promise((resolve, reject) => {
