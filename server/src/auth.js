@@ -38,7 +38,7 @@ function verifyRefreshToken(token) {
 function setRefreshCookie(res, token) {
   res.cookie('refreshToken', token, {
     httpOnly: true,
-    secure: config.isProduction,
+    secure: config.useSecureCookies,
     sameSite: 'strict',
     path: '/api/auth',
     maxAge: config.refreshTokenTtlMs
@@ -48,7 +48,7 @@ function setRefreshCookie(res, token) {
 function clearRefreshCookie(res) {
   res.clearCookie('refreshToken', {
     httpOnly: true,
-    secure: config.isProduction,
+    secure: config.useSecureCookies,
     sameSite: 'strict',
     path: '/api/auth'
   });

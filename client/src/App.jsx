@@ -494,7 +494,9 @@ function MessageBubble({ message, mine, token, onToken, onReply, onEdit, onDelet
           <div className="message-meta">
             {message.editedAt && <span>bearbeitet</span>}
             <time>{messageTime(message.createdAt)}</time>
-            {mine && (message.readCount > 0 ? <CheckCheck size={14} className="read-check" /> : <Check size={14} />)}
+            {mine && (message.readCount > 0
+              ? <CheckCheck size={14} className="read-check" aria-label={`Gelesen von ${message.readCount} ${message.readCount === 1 ? 'Person' : 'Personen'}`} title={`Gelesen von ${message.readCount} ${message.readCount === 1 ? 'Person' : 'Personen'}`} />
+              : <Check size={14} aria-label="Gesendet, noch nicht gelesen" title="Gesendet, noch nicht gelesen" />)}
           </div>
           {message.reactions?.length > 0 && <div className="message-reactions">
             {message.reactions.map((reaction) => <button
@@ -553,6 +555,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const socketRef = useRef(null);
+  const chatSearchRef = useRef(null);
   const selectedIdRef = useRef(null);
   const typingTimer = useRef(null);
   const messagesEndRef = useRef(null);
@@ -575,10 +578,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   }, [refreshLists]);
 
   useEffect(() => {
-    const socket = io({
-      path: '/socket.io',
-      auth: { token }
-    });
+    const socket = io({ path: '/socket.io', auth: { token } });
     socketRef.current = socket;
     let refreshingSocket = false;
     socket.on('connect_error', (socketError) => {
@@ -744,7 +744,22 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   }, [search, section, token, onToken]);
 
   const selected = conversations.find((item) => item.id === selectedId) || null;
-  const visibleConversations = conversations.filter((item) => (item.name || '').toLowerCase().includes(search.trim().toLowerCase()));
+  const conversationQuery = search.trim().toLocaleLowerCase();
+  const visibleConversations = conversations.filter((item) => !conversationQuery
+    || (item.name || '').toLocaleLowerCase().includes(conversationQuery)
+    || (item.lastMessage || '').toLocaleLowerCase().includes(conversationQuery));
+
+  useEffect(() => {
+    function handleSearchShortcut(event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSection('chats');
+        window.setTimeout(() => chatSearchRef.current?.focus(), 0);
+      }
+    }
+    window.addEventListener('keydown', handleSearchShortcut);
+    return () => window.removeEventListener('keydown', handleSearchShortcut);
+  }, []);
 
   async function selectConversation(conversation) {
     setSelectedId(conversation.id);
@@ -1123,7 +1138,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
         </div>
         {section === 'chats' && (
           <>
-            <label className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Chats durchsuchen" /><kbd>⌘ K</kbd></label>
+            <label className="search-box"><Search size={16} /><input ref={chatSearchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Chats durchsuchen" /><kbd>Ctrl K</kbd></label>
             <div className="conversation-list">
               {visibleConversations.length === 0 ? (
                 <div className="chat-list-empty">

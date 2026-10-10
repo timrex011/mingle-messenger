@@ -668,7 +668,7 @@ function createChatRouter({ db, requireAuth, realtime }) {
       SELECT m.id, m.conversation_id, m.sender_id, sender.username AS sender_username,
         m.body, m.created_at, m.edited_at, m.deleted_at, m.reply_to,
         reply.body AS reply_body, reply_user.username AS reply_sender_username, reply.deleted_at AS reply_deleted_at,
-        (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id) AS read_count
+        (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id <> m.sender_id) AS read_count
       FROM messages m
       LEFT JOIN users sender ON sender.id = m.sender_id
       LEFT JOIN messages reply ON reply.id = m.reply_to
@@ -871,7 +871,7 @@ function createChatRouter({ db, requireAuth, realtime }) {
       SELECT m.id, m.conversation_id, m.sender_id, sender.username AS sender_username,
         m.body, m.created_at, m.edited_at, m.deleted_at, m.reply_to,
         reply.body AS reply_body, reply_user.username AS reply_sender_username, reply.deleted_at AS reply_deleted_at,
-        (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id) AS read_count
+        (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id <> m.sender_id) AS read_count
       FROM messages m
       LEFT JOIN users sender ON sender.id = m.sender_id
       LEFT JOIN messages reply ON reply.id = m.reply_to

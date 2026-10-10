@@ -3,15 +3,80 @@
   "version": "1.0.0",
   "private": true,
   "description": "A secure, email-based real-time messenger",
+  "author": "Mingle",
   "main": "desktop/main.cjs",
   "scripts": {
     "start": "node server/src/index.js",
     "dev": "node --watch server/src/index.js",
     "build": "npm run build --prefix client",
     "email:test": "node server/src/email-check.js",
-    "desktop:dev": "npm --prefix desktop run dev",
-    "desktop:dist": "npm run build && npm --prefix desktop run dist",
+    "desktop:dev": "electron .",
+    "desktop:dist": "npm run build && node desktop/prepare-runtime.cjs && electron-builder --win --x64",
     "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "de.mingle.messenger",
+    "productName": "Mingle",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/main.cjs",
+      "desktop/preload.cjs",
+      "desktop/connect.html",
+      "package.json",
+      "!node_modules/**"
+    ],
+    "extraMetadata": {
+      "main": "desktop/main.cjs",
+      "dependencies": {}
+    },
+    "extraResources": [
+      {
+        "from": "desktop/release-config.json",
+        "to": "release-config.json",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mingle",
+      "uninstallDisplayName": "Mingle",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Mingle-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "Mingle-Portable-${version}.exe"
+    }
   },
   "engines": {
     "node": ">=20"

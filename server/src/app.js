@@ -26,11 +26,27 @@ const app = express();
 const authRouter = express.Router();
 
 app.disable('x-powered-by');
-if (config.isProduction) app.set('trust proxy', 1);
-app.use(helmet());
+if (config.isProduction && !config.isDesktop) app.set('trust proxy', 1);
+app.use(helmet({
+  hsts: config.useSecureCookies ? { maxAge: 15552000, includeSubDomains: true } : false,
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      connectSrc: ["'self'", 'ws:', 'wss:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"]
+    }
+  }
+}));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || origin === config.clientOrigin) {
+    if (!origin || origin === config.clientOrigin || origin === config.appUrl) {
       callback(null, true);
       return;
     }
@@ -157,13 +173,15 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   const createUser = db.transaction(() => {
     db.prepare(`
-      INSERT INTO users (id, email, username, password_hash, age)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, email, username, passwordHash, age);
-    db.prepare(`
-      INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
-      VALUES (?, ?, ?)
-    `).run(tokenHash, id, expiresAt);
+      INSERT INTO users (id, email, username, password_hash, age, email_verified)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, email, username, passwordHash, age, config.isDesktop ? 1 : 0);
+    if (!config.isDesktop) {
+      db.prepare(`
+        INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
+        VALUES (?, ?, ?)
+      `).run(tokenHash, id, expiresAt);
+    }
   });
 
   try {
@@ -176,24 +194,28 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     throw error;
   }
 
-  const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
-  try {
-    await sendAccountLink({
-      email,
-      label: 'E-Mail-Adresse bestätigen',
-      url: verificationUrl
-    });
-  } catch (error) {
-    db.transaction(() => {
-      db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(id);
-      db.prepare('DELETE FROM users WHERE id = ? AND email_verified = 0').run(id);
-    })();
-    console.error('[E-Mail] Bestätigungslink konnte nicht versendet werden:', error.message);
-    res.status(503).json({ error: 'Die Bestätigungs-E-Mail konnte gerade nicht versendet werden. Bitte versuche es später erneut.' });
-    return;
+  if (!config.isDesktop) {
+    const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
+    try {
+      await sendAccountLink({
+        email,
+        label: 'E-Mail-Adresse bestätigen',
+        url: verificationUrl
+      });
+    } catch (error) {
+      db.transaction(() => {
+        db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(id);
+        db.prepare('DELETE FROM users WHERE id = ? AND email_verified = 0').run(id);
+      })();
+      console.error('[E-Mail] Bestätigungslink konnte nicht versendet werden:', error.message);
+      res.status(503).json({ error: 'Die Bestätigungs-E-Mail konnte gerade nicht versendet werden. Bitte versuche es später erneut.' });
+      return;
+    }
   }
   res.status(201).json({
-    message: 'Konto erstellt. Bitte bestätige deine E-Mail-Adresse über den zugesandten Link.'
+    message: config.isDesktop
+      ? 'Konto erstellt. Du kannst dich jetzt anmelden.'
+      : 'Konto erstellt. Bitte bestätige deine E-Mail-Adresse über den zugesandten Link.'
   });
 }));
 
@@ -530,7 +552,7 @@ authRouter.delete('/me', requireAuth, asyncRoute(async (req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api', createChatRouter({ db, requireAuth, realtime }));
 
-if (config.isProduction) {
+if (config.serveClient) {
   app.use(express.static(path.join(__dirname, '../../client/dist'), {
     index: false,
     maxAge: '1y',
@@ -540,7 +562,7 @@ if (config.isProduction) {
 
 app.use((req, res) => {
   const isApiRequest = req.path === '/api' || req.path.startsWith('/api/') || req.path.startsWith('/socket.io');
-  if (config.isProduction && req.method === 'GET' && !isApiRequest) {
+  if (config.serveClient && req.method === 'GET' && !isApiRequest) {
     res.sendFile(path.join(__dirname, '../../client/dist/index.html'));
     return;
   }

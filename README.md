@@ -1,6 +1,6 @@
 # Messenger
 
-E-Mail-basierter Messenger mit Node.js, Express, SQLite, React und Socket.IO. Die App bietet E-Mail-Registrierung, Verifizierung, Direkt- und Gruppenchats, Freundschaftsanfragen, Blocks, Nachrichtenverwaltung, Echtzeit-Reaktionen, private Bild-/Dateianhänge und responsive Desktop-/Mobilansichten.
+E-Mail-basierter Messenger mit React. Für lokale Entwicklung gibt es weiterhin den Node.js-/Express-/SQLite-/Socket.IO-Server; der gemeinsame Cloudflare-Betrieb verwendet Workers, D1, Durable Objects und R2.
 
 ## Projektstruktur
 
@@ -11,6 +11,20 @@ E-Mail-basierter Messenger mit Node.js, Express, SQLite, React und Socket.IO. Di
 ├── package.json
 ├── package-lock.json
 ├── railway.json
+├── cloudflare
+│   ├── .dev.vars.example
+│   ├── build.mjs
+│   ├── migrations
+│   │   └── 0001_schema.sql
+│   ├── src
+│   │   ├── auth.mjs
+│   │   ├── chat.mjs
+│   │   ├── core.mjs
+│   │   ├── realtime.mjs
+│   │   ├── router.mjs
+│   │   ├── worker.mjs
+│   │   └── core.test.mjs
+│   └── wrangler.toml
 ├── client
 │   ├── index.html
 │   ├── package.json
@@ -19,6 +33,7 @@ E-Mail-basierter Messenger mit Node.js, Express, SQLite, React und Socket.IO. Di
 │   │   ├── api.js
 │   │   ├── App.jsx
 │   │   ├── main.jsx
+│   │   ├── worker-realtime.js
 │   │   └── styles.css
 │   └── vite.config.js (dist/ wird beim Build generiert)
 ├── desktop
@@ -78,53 +93,89 @@ Benötigt Node.js 20 oder neuer.
    npm run build
    ```
 
-## Öffentliche Bereitstellung auf Railway
+## Gemeinsamer Cloudflare-Betrieb
 
-Railway hostet **eine gemeinsame Messenger-Instanz**. Alle Nutzer verwenden damit denselben Server, dieselbe SQLite-Datenbank und dieselben Uploads. SQLite und der lokale Presence-/Rate-Limit-Speicher sind für genau eine Server-Instanz ausgelegt.
+Die Cloudflare-Variante ist eine separate, gemeinsam genutzte Bereitstellung: Worker für API und Frontend, D1 für Konten/Chats, Durable Objects für WebSockets/Rate-Limits und R2 für private Anhänge. Eine Cloudflare-Adresse kann danach von allen Nutzern und vom Desktop-Client verwendet werden.
 
-1. Veröffentliche das Projekt in einem privaten oder öffentlichen GitHub-Repository und erstelle in Railway ein Projekt aus diesem Repository. Lade niemals `.env`, Datenbankdateien oder Zugangsdaten in GitHub hoch.
-2. Füge beim Railway-Service ein dauerhaftes Volume mit dem Mount-Pfad `/data` hinzu.
-3. Lege im Railway-Service diese Variablen an:
+1. Installiere Node.js 20+ und Abhängigkeiten:
 
-    | Variable | Wert |
-    | --- | --- |
-    | `NODE_ENV` | `production` |
-    | `DATABASE_PATH` | `/data/messenger.sqlite` |
-    | `ATTACHMENT_PATH` | `/data/uploads` |
-    | `APP_URL` | Deine öffentliche HTTPS-URL, z. B. `https://mingle-production.up.railway.app` |
-    | `CLIENT_ORIGIN` | Dieselbe öffentliche HTTPS-URL wie `APP_URL` |
-    | `JWT_ACCESS_SECRET` | Langer, zufälliger, geheimer Wert |
-    | `JWT_REFRESH_SECRET` | Ein anderer langer, zufälliger, geheimer Wert |
-    | `SMTP_HOST` | SMTP-Host deines E-Mail-Anbieters |
-    | `SMTP_PORT` | SMTP-Port, meistens `587` |
-    | `SMTP_SECURE` | `false` bei Port 587, normalerweise `true` bei Port 465 |
-    | `SMTP_USER` | SMTP-Konto |
-    | `SMTP_PASSWORD` | SMTP-/App-Passwort als Railway-Secret |
-    | `SMTP_FROM` | Zugelassener Absender, z. B. `Mingle <deine-adresse@example.com>` |
+   ```powershell
+   npm install
+   npm install --prefix client
+   ```
 
-    `PORT` wird von Railway automatisch gesetzt. Die JWT-Schlüssel müssen verschieden sein. Erzeuge sie lokal mit `node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"` und füge die Ausgaben direkt als Railway-Variablen ein; teile sie nicht im Chat.
-4. Railway verwendet `railway.json`, baut das React-Frontend und startet den Express-Server. Füge in Railway eine öffentliche Domain hinzu und warte, bis der Healthcheck unter `/api/health` erfolgreich ist.
-5. Teste Registrierung, Bestätigungs-E-Mail, Anmeldung und Datei-Upload über die öffentliche HTTPS-Adresse. SMTP-Passwort und JWT-Schlüssel bleiben ausschließlich in Railway und dürfen nie in Frontend-Variablen eingetragen werden.
+2. Melde Wrangler beim eigenen Cloudflare-Konto an:
 
-Das Volume muss **vor dem ersten produktiven Start** angelegt sein und am Pfad `/data` hängen. Ohne Volume gehen SQLite-Daten und Uploads bei einem Austausch der Railway-Instanz verloren. SQLite-WAL benötigt, dass Datenbank, `-wal` und `-shm` gemeinsam auf diesem Volume liegen. Betreibe zunächst nur eine Railway-Replica; mehrere Replicas benötigen PostgreSQL, einen gemeinsamen Upload-Speicher, einen zentralen Rate-Limit-Store und einen Socket.IO-Adapter.
+   ```powershell
+   npx wrangler login
+   ```
+
+3. Erstelle die D1-Datenbank und den R2-Bucket:
+
+   ```powershell
+   npm run cf:d1:create
+   npm run cf:r2:create
+   ```
+
+   Der D1-Befehl trägt die zurückgegebene Datenbank-ID automatisch in `cloudflare/wrangler.toml` ein. Prüfe die Datei, bevor du fortfährst.
+
+4. Lege D1-Tabellen und Indizes an:
+
+   ```powershell
+   npm run cf:d1:migrate:remote
+   ```
+
+5. Lege die Produktions-Secrets in Wrangler an. Erzeuge für die JWT-Werte jeweils einen eigenen Zufallswert; verwende nie die Beispielwerte:
+
+   ```powershell
+   node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
+   npx wrangler secret put JWT_ACCESS_SECRET --config cloudflare/wrangler.toml
+   npx wrangler secret put JWT_REFRESH_SECRET --config cloudflare/wrangler.toml
+   npx wrangler secret put REALTIME_INTERNAL_SECRET --config cloudflare/wrangler.toml
+   npx wrangler secret put RESEND_API_KEY --config cloudflare/wrangler.toml
+   npx wrangler secret put MAIL_FROM --config cloudflare/wrangler.toml
+   ```
+
+   Gib den jeweiligen Wert nur direkt in den Wrangler-Eingabeprompt ein. `MAIL_FROM` muss ein bei Resend verifizierter Absender sein. Für E-Mail-Bestätigungen an beliebige Nutzer braucht Resend in der Regel eine verifizierte eigene Domain und einen API-Key. Das Gmail-App-Passwort aus der lokalen `.env` ist **kein** Cloudflare-Mail-API-Key und darf nicht wiederverwendet werden: Workers können den vorhandenen SMTP-Versand nicht direkt nutzen. Falls Frontend und API später auf unterschiedlichen Domains liegen, setze `CLIENT_ORIGIN` in `cloudflare/wrangler.toml` auf die genaue HTTPS-Origin des Frontends.
+
+6. Baue und veröffentliche Worker und React-Frontend:
+
+   ```powershell
+   npm run cf:deploy
+   ```
+
+   Wrangler gibt die öffentliche `workers.dev`-Adresse aus. Danach sollte `https://DEINE-ADRESSE/api/health` `{"status":"ok"}` liefern. Registrierung, Verifizierung, Login und Anhänge müssen anschließend mit echten E-Mail-Adressen über diese HTTPS-Adresse getestet werden.
+
+`npm run cf:dev` startet die lokale Cloudflare-Variante auf `http://localhost:8787`. Dafür zuerst `cloudflare/.dev.vars.example` nach `cloudflare/.dev.vars` kopieren, eigene lokale Test-Secrets setzen und `npm run cf:d1:migrate:local` ausführen. `.dev.vars` wird nicht versioniert.
+
+**Wichtig zu bestehenden Daten:** Die Cloudflare-Datenbank startet leer; lokale SQLite-Konten, Chats und Dateien werden nicht automatisch hochgeladen. Das Cloudflare-Backend verwendet PBKDF2-Passworthashes (mit Web Crypto), während der lokale Express-Server bcrypt nutzt. Daher können lokale Passwörter nicht einfach durch Kopieren der SQLite-Datei übernommen werden. Vor einer späteren Datenmigration muss ausdrücklich festgelegt werden, welche Daten übernommen werden dürfen und wie Nutzer ihre Passwörter zurücksetzen.
+
+**Kosten und Limits:** Cloudflare bietet kostenlose Kontingente, aber keine unbegrenzte Gratisgarantie. Workers, D1, Durable Objects und R2 haben harte Tages-/Monats- und Speicherlimits; bei Erreichen können Anfragen oder Schreibvorgänge fehlschlagen. Prüfe aktuelle Kontingente im Cloudflare-Dashboard und richte Nutzungswarnungen ein. Der aktuelle Echtzeit-Hub ist ein einzelnes Durable Object und eignet sich zunächst für kleine bis mittlere Nutzung, nicht für unbegrenzte Skalierung.
 
 ## Windows-Desktop-EXE
 
-Der Electron-Client ist eine portable Desktop-EXE für genau dieselbe gehostete Web-App; Konten und Chats werden **nicht** lokal gespeichert. Baue die EXE erst, nachdem die Railway-App eine echte öffentliche HTTPS-Adresse hat. Unter Windows mit Node.js 20+ im Projektverzeichnis:
+Die fertige Windows-App ist ein Installer wie bei Discord oder Telegram: Setup legt Startmenü- und Desktop-Verknüpfungen an, startet den Messenger als eigenes Fenster und speichert Konten, Chats, Dateien und Sitzungen in einer lokalen SQLite-Datenbank unter `%APPDATA%\messenger-app\`. Alle bestehenden Funktionen (Registrierung, Freunde, Direkt- und Gruppenchats, Anhänge, Reaktionen, Blockieren, Einstellungen) laufen in der EXE. In der Desktop-Variante sind Konten nach der Registrierung sofort nutzbar; ein SMTP-Server ist dafür nicht nötig.
+
+Unter Windows mit Node.js 20+ im Projektverzeichnis:
 
 ```powershell
-Push-Location desktop
 npm install
-Pop-Location
-$env:MINGLE_APP_URL = "https://deine-öffentliche-railway-url"
+npm install --prefix client
 npm run desktop:dist
 ```
 
-Die portable EXE liegt danach in `release/` und kann direkt gestartet werden; sie installiert keine Startmenü- oder Desktop-Verknüpfungen. Die URL wird für den Build in `desktop/app-url.json` geschrieben und von Git ignoriert. Für eine andere Serveradresse muss die EXE mit der neuen `MINGLE_APP_URL` neu gebaut werden. Zum Entwickeln mit einem lokalen Vite-Server: in einem Terminal `Push-Location client; npm run dev` und in einem zweiten Terminal `Push-Location desktop; npm install; Pop-Location; npm run desktop:dev` ausführen.
+Danach liegen die Dateien in `release/`:
+
+- `Mingle-Setup-1.0.0.exe` — Ein-Klick-Installer mit Desktop- und Startmenü-Verknüpfung
+- `Mingle-Portable-1.0.0.exe` — portable EXE ohne Installation
+
+Die Setup-Datei kannst du weitergeben und wie Discord/Telegram installieren. Die Datenbank bleibt bei einem Update erhalten; nur eine Deinstallation mit manueller AppData-Löschung entfernt Chats.
+
+Zum Entwickeln mit Vite: in einem Terminal `npm run dev`, in einem zweiten `Push-Location client; npm run dev` und in einem dritten `npm run desktop:dev`.
 
 ### E-Mail-Versand
 
-In der Entwicklung werden Links nur dann in der Serverkonsole ausgegeben, wenn SMTP nicht konfiguriert ist. Sobald `SMTP_HOST` gesetzt ist, prüft der Server die SMTP-Verbindung vor dem Start und bricht mit einer klaren Meldung ab, falls Host, TLS oder Zugangsdaten nicht funktionieren. `SMTP_USER` und `SMTP_PASSWORD` müssen gemeinsam gesetzt werden. Der Absender in `SMTP_FROM` muss zum SMTP-Konto passen und vom Anbieter zugelassen sein.
+Für den lokalen Express-Server werden Bestätigungs- und Reset-Links ohne SMTP in der Serverkonsole ausgegeben. Ist `SMTP_HOST` gesetzt, prüft der Server die SMTP-Verbindung vor dem Start. `SMTP_USER` und `SMTP_PASSWORD` müssen gemeinsam gesetzt werden. Der Absender in `SMTP_FROM` muss zum SMTP-Konto passen und vom Anbieter zugelassen sein.
 
 Beispiel für Gmail in `.env`:
 
@@ -146,7 +197,7 @@ Nach dem Eintragen kannst du Verbindung und tatsächlichen Versand testen:
 npm run email:test
 ```
 
-Die Testnachricht geht an `SMTP_TEST_TO` (oder, falls leer, an `SMTP_USER`). Für produktive Bereitstellung muss `CLIENT_ORIGIN` auf die öffentlich erreichbare HTTPS-Adresse der Web-App zeigen, damit Bestätigungs- und Reset-Links von Empfängern geöffnet werden können. `SMTP_FROM` allein ist keine E-Mail-Adresseinrichtung; ein SMTP-Postfach und dessen Zugangsdaten sind erforderlich.
+Die Testnachricht geht an `SMTP_TEST_TO` (oder, falls leer, an `SMTP_USER`). Diese SMTP-Konfiguration gehört **nur zum lokalen Express-Server**. Die Cloudflare-Variante verwendet den HTTPS-Mail-API-Endpunkt von Resend; dafür werden `RESEND_API_KEY` und `MAIL_FROM` als Wrangler-Secrets benötigt. Ein Resend-Absender muss beim Anbieter zugelassen sein. Cloudflare-Mail-Secrets bleiben im Worker und dürfen nie als `VITE_*`-Variablen oder im Client gespeichert werden.
 
 ## Authentifizierungs-API
 
@@ -193,20 +244,19 @@ Chat-Routen verwenden den Header `Authorization: Bearer <access-token>`:
 | GET/PATCH | `/api/groups/:id` | Gruppenmitglieder ansehen oder (als Admin) den Namen ändern |
 | POST/PATCH/DELETE | `/api/groups/:id/members...` | Gruppenmitglieder hinzufügen, Admin-Rolle ändern, entfernen oder selbst verlassen |
 
-Socket.IO authentifiziert sich beim Verbindungsaufbau mit `auth: { token: accessToken }`. Der Server sendet `message:new`, `message:updated`, `message:deleted`, `message:reaction`, `conversation:read`, `typing:update`, `presence:update`, `friendship:update` und `conversation:created`. Der Client sendet `typing:set`; Nachrichteninhalte und Reaktionen werden über die REST-API gespeichert und anschließend in Echtzeit verteilt.
+Der lokale Express-Server verwendet Socket.IO. Die Cloudflare-Variante verwendet authentifizierte native WebSockets über Durable Objects und transportiert dieselben UI-Ereignisse: `message:new`, `message:updated`, `message:deleted`, `message:reaction`, `conversation:read`, `typing:update`, `presence:update`, `friendship:update` und `conversation:created`. Nachrichteninhalte und Reaktionen werden über die REST-API gespeichert und anschließend in Echtzeit verteilt.
 
 ## Datenbank
 
-Das vollständige Schema liegt in [`server/db/schema.sql`](server/db/schema.sql). Es enthält Nutzer, Freundschaften, Blocks, Direkt- und Gruppenkonversationen, Mitgliedschaften, Nachrichten, private Dateianhänge, Emoji-Reaktionen, persönliche Nachrichtenlöschungen, Sessions, Verifizierungs- und Passwort-Reset-Tokens samt Fremdschlüsseln und Indizes. Upload-Dateien werden standardmäßig in `data/uploads` gespeichert; der Pfad lässt sich mit `ATTACHMENT_PATH` anpassen.
+Das lokale Express-Schema liegt in [`server/db/schema.sql`](server/db/schema.sql); die D1-Migration liegt unter `cloudflare/migrations/0001_schema.sql`. Beide enthalten Nutzer, Freundschaften, Blocks, Direkt- und Gruppenkonversationen, Mitgliedschaften, Nachrichten, private Dateianhänge, Emoji-Reaktionen, persönliche Nachrichtenlöschungen, Sessions sowie Verifizierungs- und Passwort-Reset-Tokens samt Fremdschlüsseln und Indizes. Lokal liegen Upload-Dateien in `data/uploads`; in Cloudflare liegen sie privat in R2.
 
 ## Sicherheits- und Betriebsgrenzen
 
-- SQLite-Abfragen verwenden gebundene Parameter; Passwörter werden mit bcrypt gehasht.
+- SQL-Abfragen verwenden gebundene Parameter. Lokal werden Passwörter mit bcrypt, im Worker asynchron über Web Crypto mit PBKDF2-SHA-256 gehasht.
 - Login, Registrierung, Verifizierungsversand und Passwort-Reset sind pro Prozess/IP auf 10 Anfragen je 15 Minuten begrenzt.
 - Helmet setzt Sicherheitsheader; Nutzernamen erlauben nur Buchstaben, Zahlen und Unterstriche. Nachrichten werden in React als Text und nicht als HTML gerendert.
 - Uploads sind auf 10 MB pro Datei begrenzt. Akzeptiert werden JPEG, PNG, GIF, WebP, PDF und Textdateien; MIME-Angabe und Dateisignatur werden geprüft. SVG und ausführbare Inhalte werden nicht akzeptiert. Downloads prüfen den angemeldeten Nutzer und seine aktuelle Chatmitgliedschaft.
-- Die In-Memory-Rate-Limitierung eignet sich nur für lokale Einzelinstanzen. Für mehrere Produktionsinstanzen ist ein gemeinsamer Store (z. B. Redis) nötig.
-- Die Railway-Konfiguration nutzt bewusst eine einzelne Instanz mit SQLite auf persistentem Volume. Für größere Last muss vor horizontaler Skalierung auf PostgreSQL und gemeinsame Echtzeit-/Dateispeicher umgestellt werden.
-- Es gibt keine Ende-zu-Ende-Verschlüsselung: Nachrichten liegen serverseitig als Klartext in SQLite. In Produktion müssen HTTPS/WSS am Reverse Proxy aktiviert und Datenbankzugriffe geschützt werden.
+- Der lokale Server begrenzt Anfragen im Prozessspeicher; der Worker verwendet dafür Durable Objects. Ein einzelner globaler Realtime-Hub begrenzt die Skalierung der aktuellen Cloudflare-Version.
+- Im Cloudflare-Betrieb liegen Nachrichten serverseitig als Klartext in D1. Es gibt keine Ende-zu-Ende-Verschlüsselung; verwende nur HTTPS/WSS und sichere Secrets im Cloudflare-Dashboard.
 - Änderung der E-Mail-Adresse, Ende-zu-Ende-Verschlüsselung und vollständiger Gruppenlösch-/Transfer-Workflow sind noch nicht enthalten. Die grundlegende Verwaltung von Mitgliedern, Rollen und Gruppennamen ist in der Oberfläche verfügbar.
-- Presence-Status und Rate-Limits liegen im Prozessspeicher; horizontale Skalierung benötigt Socket.IO-Adapter und einen gemeinsamen Rate-Limit-Store.
+- Free-Tier-Grenzen gelten für Worker-Aufrufe, CPU, D1, Durable Objects und R2. Bei übermäßiger Nutzung oder erreichten Quoten kann der Cloudflare-Dienst Anfragen ablehnen. E-Mail-Zustellung erfordert einen externen E-Mail-API-Anbieter.

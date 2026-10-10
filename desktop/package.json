@@ -2,33 +2,11 @@
   "name": "mingle-desktop",
   "version": "1.0.0",
   "private": true,
-  "description": "Desktop client for the hosted Mingle messenger",
+  "description": "Desktop client for the Mingle messenger",
   "author": "Mingle",
   "main": "main.cjs",
   "scripts": {
     "dev": "electron .",
-    "dist": "electron-builder --win portable --x64"
-  },
-  "devDependencies": {
-    "electron": "^44.7.0",
-    "electron-builder": "^26.15.3"
-  },
-  "build": {
-    "appId": "de.mingle.messenger",
-    "productName": "Mingle",
-    "npmRebuild": false,
-    "directories": {
-      "output": "../release"
-    },
-    "files": [
-      "main.cjs",
-      "app-url.json",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        "portable"
-      ]
-    }
+    "dist": "node build-installer.cjs"
   }
 }

@@ -34,6 +34,9 @@ async function verifyTransport() {
 async function sendAccountLink({ email, label, url }) {
   if (!transporter) {
     console.info(`[${label}] ${url}`);
+    if (config.isDesktop) {
+      console.info(`MINGLE_ACCOUNT_LINK ${url}`);
+    }
     return;
   }
 
