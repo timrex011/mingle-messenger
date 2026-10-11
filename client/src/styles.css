@@ -23,6 +23,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(97, 120, 237
 
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); }
 .brand-mark { width: 37px; height: 37px; border-radius: 13px; background: #687ef1; color: white; display: grid; place-items: center; box-shadow: 0 6px 16px rgba(97, 120, 237, .28); }
+.brand-img-mark { display: block; object-fit: cover; }
 .brand-name { font: 800 23px/1 'Manrope', sans-serif; letter-spacing: -1.2px; }
 .brand-name > span { color: #8293f2; }
 .brand-compact .brand-mark { width: 54px; height: 54px; border-radius: 20px; }
@@ -51,7 +52,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(97, 120, 237
 .auth-art::after { content: ''; position: absolute; width: 480px; height: 480px; border-radius: 50%; border: 1px solid rgba(255,255,255,.12); top: 170px; left: 38%; }
 .auth-art-top { position: relative; z-index: 2; }
 .auth-art .brand { color: #fff; }
-.auth-art .brand-mark { color: #687be3; background: #fff; box-shadow: 0 7px 20px rgba(39, 47, 111, .15); }
+.auth-art .brand-mark:not(img) { color: #687be3; background: #fff; box-shadow: 0 7px 20px rgba(39, 47, 111, .15); }
+.auth-art img.brand-mark { box-shadow: 0 7px 20px rgba(39, 47, 111, .25); }
 .auth-art .brand-name > span { color: rgba(255,255,255,.74); }
 .art-orbit { position: absolute; z-index: 0; border-radius: 50%; background: rgba(255,255,255,.07); }
 .orbit-one { width: 520px; height: 520px; right: -250px; bottom: -250px; }

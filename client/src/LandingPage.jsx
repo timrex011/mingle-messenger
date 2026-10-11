@@ -53,7 +53,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
         <div className="landing-nav-inner">
           <div className="landing-brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
             <span className="brand-logo-glow">
-              <MessageSquare size={22} className="brand-icon" />
+              <img src="/favicon.png" alt="mingle" style={{ width: 28, height: 28, borderRadius: 8, display: 'block' }} />
             </span>
             <span className="brand-title">mingle<span>.</span></span>
           </div>

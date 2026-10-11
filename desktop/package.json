@@ -1,12 +1,110 @@
 {
-  "name": "mingle-desktop",
-  "version": "1.0.0",
+  "name": "messenger-app",
+  "version": "1.0.2",
   "private": true,
-  "description": "Desktop client for the Mingle messenger",
+  "description": "A secure, email-based real-time messenger",
   "author": "Mingle",
   "main": "main.cjs",
   "scripts": {
-    "dev": "electron .",
-    "dist": "node build-installer.cjs"
+    "start": "node server/src/index.js",
+    "dev": "node --watch server/src/index.js",
+    "build": "npm run build --prefix client",
+    "email:test": "node server/src/email-check.js",
+    "desktop:dev": "electron .",
+    "desktop:dist": "npm run build && node desktop/bundle-updater.cjs && node desktop/build-integrity.cjs && electron-builder --win nsis --x64",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "de.mingle.messenger",
+    "productName": "Mingle",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/main.cjs",
+      "desktop/preload.cjs",
+      "desktop/splash.html",
+      "desktop/connect.html",
+      "desktop/updater.cjs",
+      "desktop/integrity.json",
+      "desktop/icon.ico",
+      "desktop/icon.png",
+      "package.json",
+      "!node_modules/**"
+    ],
+    "extraMetadata": {
+      "main": "desktop/main.cjs",
+      "dependencies": {}
+    },
+    "extraResources": [
+      {
+        "from": "desktop/release-config.json",
+        "to": "release-config.json",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "desktop/icon.ico",
+      "signExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "include": "build/installer.nsh",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mingle",
+      "uninstallDisplayName": "Mingle",
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "desktop/icon.ico",
+      "uninstallerIcon": "desktop/icon.ico",
+      "installerHeaderIcon": "desktop/icon.ico",
+      "artifactName": "Mingle-Setup-${version}.exe"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "timrex011",
+        "repo": "mingle-messenger"
+      }
+    ]
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "electron-updater": "^6.8.9",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.16",
+    "otplib": "^13.5.0",
+    "qrcode": "^1.5.4",
+    "resend": "^6.32.1",
+    "socket.io": "^4.8.1"
   }
 }

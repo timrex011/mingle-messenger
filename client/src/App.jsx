@@ -44,7 +44,7 @@ import LandingPage from './LandingPage';
 function Brand({ compact = false }) {
   return (
     <div className={`brand ${compact ? 'brand-compact' : ''}`}>
-      <span className="brand-mark"><MessageCircle size={21} strokeWidth={2.5} /></span>
+      <img src="/favicon.png" alt="Mingle" className="brand-mark brand-img-mark" />
       {!compact && <span className="brand-name">mingle<span>.</span></span>}
     </div>
   );

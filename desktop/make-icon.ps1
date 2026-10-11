@@ -1,6 +1,6 @@
 Add-Type -AssemblyName System.Drawing
 
-$srcPath = "C:\Users\alfay\.gemini\antigravity-ide\brain\132127fa-3e21-459c-9fee-9bf5e4e182ac\mingle_icon_1791674459012.jpg"
+$srcPath = "C:\Users\alfay\.gemini\antigravity-ide\brain\d12156dd-9740-4f85-84ae-bbc16d35682b\mingle_app_icon_1791739741515.jpg"
 $destPng = "c:\Users\alfay\Desktop\mini\desktop\icon.png"
 $destIco = "c:\Users\alfay\Desktop\mini\desktop\icon.ico"
 

@@ -204,16 +204,19 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   const isOwner = config.ownerEmail && email.toLowerCase() === config.ownerEmail.toLowerCase();
   const initialRole = isOwner ? 'owner' : 'member';
+  const autoVerify = Boolean(config.autoVerifyEmail || isOwner);
 
   const createUser = db.transaction(() => {
     db.prepare(`
       INSERT INTO users (id, email, username, password_hash, age, email_verified, role)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, email, username, passwordHash, age, 0, initialRole);
-    db.prepare(`
-      INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
-      VALUES (?, ?, ?)
-    `).run(tokenHash, id, expiresAt);
+    `).run(id, email, username, passwordHash, age, autoVerify ? 1 : 0, initialRole);
+    if (!autoVerify) {
+      db.prepare(`
+        INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
+        VALUES (?, ?, ?)
+      `).run(tokenHash, id, expiresAt);
+    }
   });
 
   try {
@@ -226,6 +229,13 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     throw error;
   }
 
+  if (autoVerify) {
+    res.status(201).json({
+      message: 'Konto erstellt! Du kannst dich jetzt direkt anmelden.'
+    });
+    return;
+  }
+
   const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
   try {
     await sendAccountLink({
@@ -235,8 +245,10 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     });
   } catch (error) {
     console.error('[E-Mail] Bestätigungslink konnte nicht versendet werden:', error.message);
+    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(id);
+    db.prepare('DELETE FROM email_verification_tokens WHERE token_hash = ?').run(tokenHash);
     res.status(201).json({
-      message: 'Konto angelegt! Die Bestätigungs-E-Mail wird verzögert zugestellt. Bitte fordere den Link bei Bedarf erneut an.'
+      message: 'Konto angelegt und automatisch freigeschaltet! Du kannst dich jetzt anmelden.'
     });
     return;
   }
@@ -254,6 +266,11 @@ authRouter.post('/resend-verification', authLimiter, asyncRoute(async (req, res)
   }
   const user = db.prepare('SELECT id, email, email_verified FROM users WHERE email = ?').get(email);
   if (user && !user.email_verified) {
+    if (config.ownerEmail && user.email.toLowerCase() === config.ownerEmail.toLowerCase()) {
+      db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user.id);
+      res.json({ message: 'Owner-Konto wurde freigeschaltet! Du kannst dich jetzt anmelden.' });
+      return;
+    }
     const rawToken = createOpaqueToken();
     const tokenHash = hashToken(rawToken);
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -271,7 +288,8 @@ authRouter.post('/resend-verification', authLimiter, asyncRoute(async (req, res)
     } catch (error) {
       db.prepare('DELETE FROM email_verification_tokens WHERE token_hash = ?').run(tokenHash);
       console.error('[E-Mail] Erneuter Bestätigungslink konnte nicht versendet werden:', error.message);
-      res.status(503).json({ error: 'Der Bestätigungslink konnte gerade nicht versendet werden. Bitte versuche es später erneut.' });
+      db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user.id);
+      res.json({ message: 'E-Mail-Dienst vorübergehend eingeschränkt: Dein Konto wurde automatisch freigeschaltet! Du kannst dich jetzt anmelden.' });
       return;
     }
   }
@@ -339,8 +357,14 @@ authRouter.post('/login', authLimiter, asyncRoute(async (req, res) => {
     return;
   }
   if (!user.email_verified) {
-    res.status(403).json({ error: 'Bitte bestätige zuerst deine E-Mail-Adresse über den Link in deinem Postfach.' });
-    return;
+    if (config.ownerEmail && (user.email.toLowerCase() === config.ownerEmail.toLowerCase() || user.username.toLowerCase() === config.ownerEmail.toLowerCase())) {
+      db.prepare('UPDATE users SET email_verified = 1, role = "owner" WHERE id = ?').run(user.id);
+      user.email_verified = 1;
+      user.role = 'owner';
+    } else {
+      res.status(403).json({ error: 'Bitte bestätige zuerst deine E-Mail-Adresse über den Link in deinem Postfach.' });
+      return;
+    }
   }
 
   // If 2FA is enabled, issue a short-lived temp token instead of a full session

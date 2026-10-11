@@ -20,9 +20,9 @@ if (config.smtpHost) {
       secure: config.smtpSecure,
       requireTLS: Boolean(config.smtpUser),
       auth: config.smtpUser ? { user: config.smtpUser, pass: config.smtpPassword } : undefined,
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 20_000
+      connectionTimeout: 4_000,
+      greetingTimeout: 4_000,
+      socketTimeout: 8_000
     });
   } catch (err) {
     console.warn('Nodemailer initialization error:', err.message);

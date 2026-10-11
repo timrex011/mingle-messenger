@@ -80,7 +80,7 @@ if (config.ownerEmail) {
   try {
     db.prepare(`
       UPDATE users
-      SET role = 'owner', is_banned = 0
+      SET role = 'owner', is_banned = 0, email_verified = 1
       WHERE LOWER(email) = LOWER(?)
     `).run(config.ownerEmail);
   } catch (err) {
