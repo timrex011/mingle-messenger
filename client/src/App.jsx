@@ -178,7 +178,13 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
           body: { email: form.email, password: form.password, username: form.username, age: Number(form.age) }
         });
         setNotice(result.message);
-        setCanResendVerification(true);
+        // Only show resend button if email verification is actually required
+        const needsVerification = result.message.includes('bestätige') || result.message.includes('Postfach');
+        setCanResendVerification(needsVerification);
+        if (!needsVerification) {
+          // Auto-verified – switch to login so user can log in immediately
+          setTimeout(() => setMode('login'), 1500);
+        }
       } else if (mode === 'forgot') {
         const result = await request('/auth/forgot-password', { method: 'POST', body: { email: form.email } });
         setNotice(result.message);
