@@ -187,12 +187,6 @@ function createWindow() {
 
   mainWindow.setMenuBarVisibility(false);
 
-  mainWindow.webContents.on('before-input-event', (_event, input) => {
-    if (input.control && input.shift && input.key.toLowerCase() === 's') {
-      showConnectScreen();
-    }
-  });
-
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https:') || url.startsWith('http:')) {
       shell.openExternal(url);
@@ -207,12 +201,8 @@ function createWindow() {
     }
   });
 
-  const savedUrl = getSavedServerUrl();
-  if (savedUrl) {
-    loadServiceUrl(savedUrl);
-  } else {
-    showConnectScreen();
-  }
+  const savedUrl = getSavedServerUrl() || 'https://mingle-messenger-q6zt.onrender.com';
+  loadServiceUrl(savedUrl);
 }
 
 ipcMain.handle('get-last-url', () => {

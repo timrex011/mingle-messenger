@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mingle – Dein Raum für echte Gespräche & Communities</title>
-  <meta name="description" content="Mingle ist ein kostenloser Messenger mit Discord-Feeling: Server, Channels, Rollen, 2FA und Auto-Updates. Jetzt für Windows herunterladen!" />
+  <meta name="description" content="Mingle ist dein moderner Messenger: Server, Kanäle, Rollensystem, 2FA, Sprachanrufe, Video &amp; Auto-Updates. Jetzt für Windows herunterladen!" />
   <meta name="theme-color" content="#0b0d13" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -36,7 +36,7 @@
     <div class="hero-glow"></div>
     <div class="hero-badge">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
-      <span id="version-badge">Mingle v1.0.0 • Discord-Feeling mit Auto-Updates</span>
+      <span id="version-badge">Mingle v1.0.0 • Eigene Server &amp; Auto-Updates</span>
     </div>
 
     <h1 class="hero-heading">
@@ -45,8 +45,8 @@
 
     <p class="hero-subtext">
       Erstelle eigene Server mit Textkanälen, verteile Rollen von Owner bis Moderator,
-      schütze dein Profil mit 2FA und chatte in Echtzeit.
-      Ganz normal installierbar – mit automatischen Updates im Hintergrund wie bei Discord.
+      telefoniere per Voice/Video und schütze dein Profil mit 2FA.
+      Ganz normal installierbar – mit automatischen Updates direkt im Hintergrund.
     </p>
 
     <div class="hero-actions">
@@ -105,7 +105,7 @@
               <span class="mock-avatar admin">A</span>
               <div>
                 <div class="mock-author"><span class="author-name">Alex_Mod</span> <span class="role-tag admin-tag">ADMIN</span> <small>Heute um 14:12</small></div>
-                <p>2-Faktor-Authentifizierung aktiviert und Rollen sind verteilt. Alles läuft flüssig wie bei Discord!</p>
+                <p>2-Faktor-Authentifizierung aktiviert und Rollen sind verteilt. Alles läuft flüssig und stabil!</p>
               </div>
             </div>
           </div>
@@ -117,15 +117,15 @@
   <!-- ── Features ── -->
   <section id="features" class="section">
     <div class="section-header">
-      <span class="section-kicker">DISCORD-FEELING PUR</span>
+      <span class="section-kicker">COMMUNITY MESSENGER</span>
       <h2>Alles, was du für deine Community brauchst</h2>
-      <p>Von flexiblen Rollen bis hin zu verschlüsselten privaten Chats.</p>
+      <p>Von flexiblen Rollen bis hin zu verschlüsselten privaten Chats und Videoanrufen.</p>
     </div>
     <div class="features-grid">
       <div class="feature-card">
         <div class="feature-icon purple"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 .564.41l5.418 1.695a.5.5 0 0 1 .27.832l-3.77 4.078a1 1 0 0 0-.233.627l.138 5.676a.5.5 0 0 1-.725.458l-5.143-2.322a1 1 0 0 0-.823 0l-5.143 2.322a.5.5 0 0 1-.725-.458l.138-5.676a1 1 0 0 0-.233-.627L1.278 11.807a.5.5 0 0 1 .27-.832l5.418-1.695a1 1 0 0 0 .564-.41z"/></svg></div>
         <h3>Rollen &amp; Rechte-System</h3>
-        <p>Strikte Hierarchien wie in Discord: <b>Owner</b>, <b>Admin</b>, <b>Moderator</b>, <b>Staff</b> und <b>Member</b>. Der Owner hat volle Kontrolle über Banns, Kicks und Rollenverteilung.</p>
+        <p>Strikte Hierarchien für deine Community: <b>Owner</b>, <b>Admin</b>, <b>Moderator</b>, <b>Staff</b> und <b>Member</b>. Der Owner hat volle Kontrolle über Banns, Kicks und Rollenverteilung.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon blue"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/></svg></div>
@@ -199,7 +199,7 @@
           const match = text.match(/version:\s*([^\r\n]+)/);
           if (match && match[1]) {
             const ver = match[1].trim();
-            document.getElementById('version-badge').textContent = 'Mingle v' + ver + ' • Discord-Feeling mit Auto-Updates';
+            document.getElementById('version-badge').textContent = 'Mingle v' + ver + ' • Eigene Server & Auto-Updates';
             document.getElementById('download-sub').textContent = 'Version ' + ver + ' • 107 MB • Direktdownload';
             document.getElementById('download-sub-2').textContent = 'Mingle-Setup-' + ver + '.exe • 107 MB';
           }
