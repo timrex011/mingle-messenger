@@ -136,11 +136,90 @@ async function sendTestEmail() {
   });
 }
 
+async function sendNewDeviceAlert({ email, username, ip, city, deviceName, time }) {
+  if (!resendClient && !transporter) {
+    console.info(`[Sicherheits-Benachrichtigung für ${email}] Neue Anmeldung: IP=${ip}, Stadt=${city}, Gerät=${deviceName}`);
+    return;
+  }
+
+  const safeUsername = escapeHtml(username || 'Nutzer');
+  const safeIp = escapeHtml(ip || 'Unbekannt');
+  const safeCity = escapeHtml(city || 'Unbekannt');
+  const safeDevice = escapeHtml(deviceName || 'Unbekanntes Gerät');
+  const safeTime = escapeHtml(time || new Date().toLocaleString('de-DE'));
+
+  const subject = 'Sicherheitswarnung: Neue Anmeldung auf deinem mingle-Konto';
+  const text = `Hallo ${username},\n\n` +
+    `Es gab eine neue Anmeldung auf deinem Konto bei mingle von einem neuen Gerät:\n\n` +
+    `• Datum/Uhrzeit: ${time}\n` +
+    `• IP-Adresse: ${ip}\n` +
+    `• Ungefährer Standort: ${city}\n` +
+    `• Gerät: ${deviceName}\n\n` +
+    `Falls du das warst, kannst du diese Nachricht ignorieren.\n` +
+    `Falls du das NICHT warst, ändere bitte sofort dein Passwort in den Einstellungen!`;
+
+  const html = `<!doctype html>
+<html lang="de">
+  <body style="margin:0;padding:32px 16px;background:#f4f6fb;font-family:Arial,sans-serif;color:#202638">
+    <table role="presentation" style="width:100%;max-width:560px;margin:0 auto;border:1px solid #e8ebf2;border-radius:16px;background:#fff">
+      <tr><td style="padding:30px">
+        <p style="margin:0 0 20px;color:#667be9;font-size:22px;font-weight:700">mingle.</p>
+        <h1 style="margin:0 0 12px;font-size:20px;color:#1e293b">Neue Anmeldung erkannt</h1>
+        <p style="margin:0 0 20px;color:#64748b;line-height:1.5">
+          Hallo <strong>${safeUsername}</strong>, wir haben eine neue Anmeldung auf deinem mingle-Konto von einem bisher unbekannten Gerät festgestellt.
+        </p>
+
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin:0 0 24px">
+          <table style="width:100%;font-size:14px;color:#334155;border-collapse:collapse">
+            <tr><td style="padding:6px 0;color:#64748b;width:130px"><strong>Datum & Zeit:</strong></td><td style="padding:6px 0">${safeTime}</td></tr>
+            <tr><td style="padding:6px 0;color:#64748b"><strong>IP-Adresse:</strong></td><td style="padding:6px 0">${safeIp}</td></tr>
+            <tr><td style="padding:6px 0;color:#64748b"><strong>Standort:</strong></td><td style="padding:6px 0">📍 ${safeCity}</td></tr>
+            <tr><td style="padding:6px 0;color:#64748b"><strong>Gerät:</strong></td><td style="padding:6px 0">💻 ${safeDevice}</td></tr>
+          </table>
+        </div>
+
+        <p style="margin:0 0 8px;color:#64748b;font-size:13px;line-height:1.5">
+          <strong>Warst du das selbst?</strong> Dann brauchst du nichts weiter zu tun.
+        </p>
+        <p style="margin:0;color:#ef4444;font-size:13px;line-height:1.5">
+          <strong>Warst du das nicht?</strong> Bitte ändere sofort dein Passwort in den Einstellungen, um dein Konto zu schützen.
+        </p>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+
+  if (resendClient) {
+    const res = await resendClient.emails.send({
+      from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
+      to: email,
+      subject,
+      text,
+      html
+    });
+    if (res.error) {
+      console.warn('[Resend Alert] Warnung:', res.error.message);
+    }
+    return res;
+  }
+
+  if (transporter) {
+    await transporter.sendMail({
+      from: config.smtpFrom,
+      to: email,
+      subject,
+      text,
+      html
+    });
+  }
+}
+
 module.exports = {
   get isConfigured() {
     return Boolean(resendClient || transporter);
   },
   sendAccountLink,
+  sendNewDeviceAlert,
   sendTestEmail,
   verifyTransport
 };

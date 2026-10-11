@@ -9,7 +9,9 @@ const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const db = require('./db');
 const config = require('./config');
+const mailer = require('./mailer');
 const { sendAccountLink } = require('./mailer');
+const { getIpLocation } = require('./geolocation');
 const realtime = require('./realtime');
 const { createChatRouter } = require('./chat');
 const {
@@ -332,6 +334,57 @@ authRouter.get('/verify-email', (req, res) => {
   res.json({ message: 'E-Mail-Adresse erfolgreich bestätigt. Du kannst dich jetzt anmelden.' });
 });
 
+async function handleDeviceLogin(user, req) {
+  if (!user || !user.id) return;
+  try {
+    const rawDeviceId = typeof req.body.deviceId === 'string' && req.body.deviceId.trim()
+      ? req.body.deviceId.trim()
+      : null;
+    const userAgent = req.headers['user-agent'] || 'Unbekanntes Gerät';
+    const deviceIdentifier = rawDeviceId || crypto.createHash('sha256').update(userAgent).digest('hex').slice(0, 32);
+
+    const deviceName = typeof req.body.deviceName === 'string' && req.body.deviceName.trim()
+      ? req.body.deviceName.trim().slice(0, 100)
+      : (userAgent.length > 80 ? userAgent.slice(0, 80) : userAgent);
+
+    const clientIp = (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : '')
+      || req.headers['cf-connecting-ip']
+      || req.socket.remoteAddress
+      || '127.0.0.1';
+
+    const existingDevice = db.prepare('SELECT id FROM user_devices WHERE user_id = ? AND device_identifier = ?').get(user.id, deviceIdentifier);
+
+    const loc = await getIpLocation(clientIp);
+
+    if (!existingDevice) {
+      // New device: save to DB
+      db.prepare(`
+        INSERT INTO user_devices (id, user_id, device_identifier, device_name, ip_address, city, last_login_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(crypto.randomUUID(), user.id, deviceIdentifier, deviceName, loc.ip, loc.city);
+
+      // Send alert email asynchronously
+      await mailer.sendNewDeviceAlert({
+        email: user.email,
+        username: user.username,
+        ip: loc.ip,
+        city: loc.city,
+        deviceName,
+        time: new Date().toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })
+      });
+    } else {
+      // Known device: update timestamp & location
+      db.prepare(`
+        UPDATE user_devices
+        SET last_login_at = CURRENT_TIMESTAMP, ip_address = ?, city = ?, device_name = ?
+        WHERE id = ?
+      `).run(loc.ip, loc.city, deviceName, existingDevice.id);
+    }
+  } catch (err) {
+    console.warn('[DeviceLogin] Warnung bei Geräte-Registrierung:', err.message);
+  }
+}
+
 authRouter.post('/login', authLimiter, asyncRoute(async (req, res) => {
   const identifier = typeof req.body.identifier === 'string' ? req.body.identifier.trim() : '';
   const password = req.body.password;
@@ -382,6 +435,7 @@ authRouter.post('/login', authLimiter, asyncRoute(async (req, res) => {
   db.prepare(`
     UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?
   `).run(user.id);
+  handleDeviceLogin(user, req);
   res.json(issueSession(user, res));
 }));
 
@@ -415,6 +469,7 @@ authRouter.post('/2fa/verify', authLimiter, asyncRoute(async (req, res) => {
     return;
   }
   db.prepare('UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+  handleDeviceLogin(user, req);
   res.json(issueSession(user, res));
 }));
 

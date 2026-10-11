@@ -149,6 +149,44 @@ function MessageAttachment({ attachment, token, onToken }) {
   </div>;
 }
 
+function getClientDeviceInfo() {
+  let deviceId = '';
+  try {
+    deviceId = localStorage.getItem('mingle_device_id') || '';
+    if (!deviceId) {
+      deviceId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'dev_' + Math.random().toString(36).slice(2) + Date.now();
+      localStorage.setItem('mingle_device_id', deviceId);
+    }
+  } catch {
+    deviceId = 'web_' + Date.now();
+  }
+
+  let deviceName = 'Web Browser';
+  try {
+    const ua = navigator.userAgent;
+    let os = 'Unbekanntes System';
+    if (ua.includes('Win')) os = 'Windows';
+    else if (ua.includes('Mac')) os = 'macOS';
+    else if (ua.includes('Linux')) os = 'Linux';
+    else if (ua.includes('Android')) os = 'Android';
+    else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+    let browser = 'Browser';
+    if (ua.includes('Edg/')) browser = 'Edge';
+    else if (ua.includes('Chrome/')) browser = 'Chrome';
+    else if (ua.includes('Firefox/')) browser = 'Firefox';
+    else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Safari';
+
+    if (window.electronAPI) {
+      deviceName = `${os} (Mingle Desktop App)`;
+    } else {
+      deviceName = `${browser} auf ${os}`;
+    }
+  } catch {}
+
+  return { deviceId, deviceName };
+}
+
 function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
   const [mode, setMode] = useState(initialMode);
   const [form, setForm] = useState({ email: '', password: '', username: '', age: '' });
@@ -171,6 +209,7 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
     setError('');
     setNotice('');
     setCanResendVerification(false);
+    const { deviceId, deviceName } = getClientDeviceInfo();
     try {
       if (mode === 'register') {
         const result = await request('/auth/register', {
@@ -191,7 +230,7 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
       } else {
         const result = await request('/auth/login', {
           method: 'POST',
-          body: { identifier: form.email, password: form.password }
+          body: { identifier: form.email, password: form.password, deviceId, deviceName }
         });
         if (result.twoFactorRequired) {
           setTwoFactor({ tempToken: result.tempToken });
@@ -230,10 +269,11 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
     event.preventDefault();
     setBusy(true);
     setError('');
+    const { deviceId, deviceName } = getClientDeviceInfo();
     try {
       const result = await request('/auth/2fa/verify', {
         method: 'POST',
-        body: { tempToken: twoFactor.tempToken, code: totpCode }
+        body: { tempToken: twoFactor.tempToken, code: totpCode, deviceId, deviceName }
       });
       onSession(result);
     } catch (requestError) {

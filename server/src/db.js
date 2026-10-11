@@ -73,6 +73,19 @@ db.exec(`
     PRIMARY KEY (server_id, user_id)
   );
   CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
+
+  CREATE TABLE IF NOT EXISTS user_devices (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_identifier TEXT NOT NULL,
+    device_name TEXT,
+    ip_address TEXT,
+    city TEXT,
+    last_login_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, device_identifier)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_devices_user ON user_devices(user_id);
 `);
 
 // Automatische Zuweisung des Owners aus der Konfiguration
