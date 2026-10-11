@@ -44,7 +44,7 @@ import LandingPage from './LandingPage';
 function Brand({ compact = false }) {
   return (
     <div className={`brand ${compact ? 'brand-compact' : ''}`}>
-      <img src="/favicon.png" alt="Mingle" className="brand-mark brand-img-mark" />
+      <img src="/favicon.svg" alt="Mingle" className="brand-mark brand-img-mark" />
       {!compact && <span className="brand-name">mingle<span>.</span></span>}
     </div>
   );
@@ -681,15 +681,6 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
             <button className="button button-danger" disabled={busy}>2FA deaktivieren</button>
           </form>
         )}
-      </section>
-      <section className="settings-card">
-        <div className="settings-card-title"><span className="settings-icon mint"><Download size={18} /></span><div><h2>Desktop-App für Windows</h2><p>Mingle als eigenständige App direkt auf deinem PC installieren.</p></div></div>
-        <div className="settings-form">
-          <p style={{ fontSize: '0.92rem', color: 'var(--text-muted)', marginBottom: 12 }}>Profitiere von direkten Desktop-Benachrichtigungen, Taskleisten-Integration und schnellem Start.</p>
-          <a href="/download" className="button button-dark" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none', width: 'fit-content' }}>
-            <Download size={16} /> Mingle-Installer herunterladen (.exe)
-          </a>
-        </div>
       </section>
       <section className="settings-card danger-card">
         <div className="settings-card-title"><span className="settings-icon rose"><X size={18} /></span><div><h2>Konto löschen</h2><p>Diese Aktion kann nicht rückgängig gemacht werden.</p></div></div>

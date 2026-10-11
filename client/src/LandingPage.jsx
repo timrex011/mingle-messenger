@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Download,
   ShieldCheck,
   Users,
   MessageSquare,
@@ -21,7 +20,8 @@ import {
   Settings,
   Plus,
   Compass,
-  Check
+  Check,
+  UserPlus
 } from 'lucide-react';
 
 export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) {
@@ -53,7 +53,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
         <div className="landing-nav-inner">
           <div className="landing-brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
             <span className="brand-logo-glow">
-              <img src="/favicon.png" alt="mingle" style={{ width: 28, height: 28, borderRadius: 8, display: 'block' }} />
+              <img src="/favicon.svg" alt="mingle" style={{ width: 28, height: 28, borderRadius: 8, display: 'block' }} />
             </span>
             <span className="brand-title">mingle<span>.</span></span>
           </div>
@@ -62,7 +62,6 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
             <a href="#features">Features</a>
             <a href="#mockup">Vorschau</a>
             <a href="#security">Sicherheit</a>
-            <a href="#download">Download</a>
           </div>
 
           <div className="landing-nav-actions">
@@ -93,7 +92,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
 
         <p className="hero-subtext">
           Erstelle eigene Server mit Text- &amp; Sprachkanälen, verteile differenzierte Rollen von Owner bis Moderator,
-          schütze dein Konto mit 2FA und chatte in Echtzeit. Als Windows-App mit automatischen Updates oder direkt im Web-Browser.
+          schütze dein Konto mit 2FA und chatte in Echtzeit. Sicher, privat und direkt im Web-Browser oder auf dem Desktop.
         </p>
 
         <div className="hero-actions">
@@ -106,26 +105,13 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
             <ArrowRight size={18} />
           </button>
 
-          <a
-            href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Windows-1.0.2.zip"
-            className="btn-hero-primary"
-            download
-          >
-            <Download size={20} />
+          <button className="btn-hero-primary" onClick={onOpenRegister}>
+            <UserPlus size={20} />
             <div className="btn-text-block">
-              <span className="btn-main-label">Download für Windows (.zip)</span>
-              <span className="btn-sub-label">Empfohlen • Ohne SmartScreen-Warnung</span>
+              <span className="btn-main-label">Kostenlos registrieren</span>
+              <span className="btn-sub-label">Direkt online loslegen</span>
             </div>
-          </a>
-
-          <a
-            href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Setup-1.0.2.exe"
-            className="btn-hero-secondary"
-            download
-          >
-            <Download size={18} />
-            <span>Direkt-Installer (.exe)</span>
-          </a>
+          </button>
         </div>
 
         <div className="hero-highlights">
@@ -426,40 +412,28 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
         </div>
       </section>
 
-      {/* ── Auto-Update Showcase & Download CTA ───────────────────────────────── */}
-      <section id="download" className="landing-section download-cta-section">
+      {/* ── Ready CTA ───────────────────────────────────────────────────────── */}
+      <section className="landing-section download-cta-section">
         <div className="download-box">
           <div className="download-box-content">
-            <span className="download-kicker">WINDOWS DESKTOP &amp; WEB</span>
-            <h2>Hol dir Mingle für deinen Alltag</h2>
+            <span className="download-kicker">COMMUNITY MESSENGER</span>
+            <h2>Starte jetzt mit Mingle</h2>
             <p>
-              Installiere die App mit 1 Klick auf Windows oder nutze sie direkt im Webbrowser.
-              Keine Konsole, keine manuellen Update-Downloads – Mingle hält sich von selbst aktuell.
+              Erstelle deinen eigenen Server, lade Freunde ein und chatte in Echtzeit.
+              Direkt im Webbrowser oder als moderne Desktop-Anwendung.
             </p>
             <div className="download-actions">
               <button className="btn-box-browser" onClick={onOpenApp}>
                 <MessageSquare size={20} />
                 <span>Web-App starten</span>
               </button>
-              <a
-                href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Windows-1.0.2.zip"
-                className="btn-hero-primary"
-                download
-              >
-                <Download size={20} />
+              <button className="btn-hero-primary" onClick={onOpenRegister}>
+                <UserPlus size={20} />
                 <div className="btn-text-block">
-                  <span className="btn-main-label">Download .ZIP (Empfohlen)</span>
-                  <span className="btn-sub-label">Ohne Browser-Warnung</span>
+                  <span className="btn-main-label">Kostenlos registrieren</span>
+                  <span className="btn-sub-label">In unter einer Minute</span>
                 </div>
-              </a>
-              <a
-                href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Setup-1.0.2.exe"
-                className="btn-hero-secondary"
-                download
-              >
-                <Download size={18} />
-                <span>Direkt-Setup (.exe)</span>
-              </a>
+              </button>
             </div>
           </div>
         </div>
@@ -469,12 +443,12 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
       <footer className="landing-footer">
         <div className="landing-footer-inner">
           <div className="footer-brand">
-            <MessageSquare size={20} className="brand-icon" />
+            <img src="/favicon.svg" alt="mingle" style={{ width: 22, height: 22, borderRadius: 6, display: 'block' }} />
             <span>mingle.</span>
           </div>
           <div className="footer-links">
             <a href="#features">Features</a>
-            <a href="#download">Download</a>
+            <a href="#security">Sicherheit</a>
             <button className="footer-link-btn" onClick={onOpenLogin}>Anmelden</button>
             <button className="footer-link-btn" onClick={onOpenRegister}>Registrieren</button>
           </div>
