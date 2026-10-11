@@ -310,11 +310,6 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
           <h1>In Verbindung.<br /><em>Ganz bei dir.</em></h1>
           <p>Teile Momente, Gedanken und alles dazwischen — einfach und sicher.</p>
           <div className="art-trust"><ShieldCheck size={17} /> Privat. Sicher. Ohne Telefonnummer.</div>
-          <div style={{ margin: '18px 0 0' }}>
-            <a href="/download" className="button button-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none', padding: '10px 18px', borderRadius: 999, fontWeight: 600, fontSize: '0.95rem' }}>
-              <Download size={16} /> Für Windows herunterladen
-            </a>
-          </div>
         </div>
         <div className="art-footer"><span>© 2026 mingle</span><span>Mit Ruhe verbunden</span></div>
       </section>
@@ -383,14 +378,6 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
           <div className="auth-assurance"><ShieldCheck size={16} /><span>Deine Daten bleiben bei dir. Wir fragen nie nach deiner Telefonnummer.</span></div>
         </div>
         <div className="auth-panel-footer">
-          {onBackToLanding && (
-            <button className="text-button" onClick={onBackToLanding} style={{ fontSize: '0.85rem' }}>
-              <ArrowLeft size={13} /> Startseite
-            </button>
-          )}
-          <a href="/download" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', textDecoration: 'none', fontSize: '0.85rem' }}>
-            <Download size={14} /> Desktop-App
-          </a>
           <button><CircleHelp size={15} /> Hilfe & Datenschutz</button>
           <span>Deutsch <ChevronDown size={13} /></span>
         </div>
