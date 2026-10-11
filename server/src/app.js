@@ -52,6 +52,11 @@ app.use(cors({
       callback(null, true);
       return;
     }
+    // Allow Vercel-hosted landing page
+    if (origin && (origin.endsWith('.vercel.app') || origin.endsWith('.vercel.app'))) {
+      callback(null, true);
+      return;
+    }
     callback(new Error('Origin is not allowed by CORS.'));
   },
   credentials: true
@@ -90,9 +95,15 @@ function publicUser(row) {
     email: row.email,
     username: row.username,
     age: row.age,
+    role: row.role || 'member',
+    status: row.status || 'online',
+    customStatus: row.custom_status || '',
+    avatarUrl: row.avatar_url,
+    bannerUrl: row.banner_url || '',
     emailVerified: Boolean(row.email_verified),
     totpEnabled: Boolean(row.totp_enabled),
-    avatarUrl: row.avatar_url,
+    isBanned: Boolean(row.is_banned),
+    banReason: row.ban_reason || '',
     createdAt: row.created_at
   };
 }
@@ -123,7 +134,7 @@ function requireAuth(req, res, next) {
   }
   try {
     req.auth = verifyAccessToken(match[1]);
-    const user = db.prepare('SELECT auth_version, email_verified FROM users WHERE id = ?').get(req.auth.sub);
+    const user = db.prepare('SELECT auth_version, email_verified, role, is_banned, ban_reason FROM users WHERE id = ?').get(req.auth.sub);
     const session = user && db.prepare(`
       SELECT 1 FROM sessions
       WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
@@ -132,6 +143,11 @@ function requireAuth(req, res, next) {
       res.status(401).json({ error: 'Sitzung abgelaufen oder ungültig.' });
       return;
     }
+    if (user.is_banned) {
+      res.status(403).json({ error: `Dein Konto wurde gesperrt. Grund: ${user.ban_reason || 'Verstoß gegen die Richtlinien'}` });
+      return;
+    }
+    req.userRole = user.role || 'member';
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError' || error.name === 'JsonWebTokenError') {
@@ -169,22 +185,35 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     return;
   }
 
+  const existingUser = db.prepare(`
+    SELECT email, username FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)
+  `).get(email, username);
+  if (existingUser) {
+    if (existingUser.email.toLowerCase() === email.toLowerCase()) {
+      res.status(409).json({ error: 'Diese E-Mail-Adresse ist bereits vergeben.' });
+      return;
+    }
+    res.status(409).json({ error: 'Dieser Benutzername ist bereits vergeben.' });
+    return;
+  }
+
   const id = crypto.randomUUID();
   const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
   const rawToken = createOpaqueToken();
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const isOwner = config.ownerEmail && email.toLowerCase() === config.ownerEmail.toLowerCase();
+  const initialRole = isOwner ? 'owner' : 'member';
+
   const createUser = db.transaction(() => {
     db.prepare(`
-      INSERT INTO users (id, email, username, password_hash, age, email_verified)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, email, username, passwordHash, age, (config.isDesktop || config.autoVerifyEmail) ? 1 : 0);
-    if (!config.isDesktop && !config.autoVerifyEmail) {
-      db.prepare(`
-        INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
-        VALUES (?, ?, ?)
-      `).run(tokenHash, id, expiresAt);
-    }
+      INSERT INTO users (id, email, username, password_hash, age, email_verified, role)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, email, username, passwordHash, age, 0, initialRole);
+    db.prepare(`
+      INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
+      VALUES (?, ?, ?)
+    `).run(tokenHash, id, expiresAt);
   });
 
   try {
@@ -197,28 +226,23 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     throw error;
   }
 
-  if (!config.isDesktop && !config.autoVerifyEmail) {
-    const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
-    try {
-      await sendAccountLink({
-        email,
-        label: 'E-Mail-Adresse bestätigen',
-        url: verificationUrl
-      });
-    } catch (error) {
-      db.transaction(() => {
-        db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(id);
-        db.prepare('DELETE FROM users WHERE id = ? AND email_verified = 0').run(id);
-      })();
-      console.error('[E-Mail] Bestätigungslink konnte nicht versendet werden:', error.message);
-      res.status(503).json({ error: 'Die Bestätigungs-E-Mail konnte gerade nicht versendet werden. Bitte versuche es später erneut.' });
-      return;
-    }
+  const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
+  try {
+    await sendAccountLink({
+      email,
+      label: 'E-Mail-Adresse bestätigen',
+      url: verificationUrl
+    });
+  } catch (error) {
+    console.error('[E-Mail] Bestätigungslink konnte nicht versendet werden:', error.message);
+    res.status(201).json({
+      message: 'Konto angelegt! Die Bestätigungs-E-Mail wird verzögert zugestellt. Bitte fordere den Link bei Bedarf erneut an.'
+    });
+    return;
   }
+
   res.status(201).json({
-    message: (config.isDesktop || config.autoVerifyEmail)
-      ? 'Konto erstellt. Du kannst dich jetzt anmelden.'
-      : 'Konto erstellt. Bitte bestätige deine E-Mail-Adresse über den zugesandten Link.'
+    message: 'Konto erstellt! Bitte bestätige zuerst deine E-Mail-Adresse (Link im Postfach), um dich anmelden zu können.'
   });
 }));
 
@@ -274,9 +298,11 @@ authRouter.get('/verify-email', (req, res) => {
     }
     db.prepare(`
       UPDATE users
-      SET email_verified = 1, updated_at = CURRENT_TIMESTAMP
+      SET email_verified = 1,
+          role = CASE WHEN LOWER(email) = LOWER(?) THEN 'owner' ELSE role END,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(record.user_id);
+    `).run(config.ownerEmail, record.user_id);
     db.prepare('DELETE FROM email_verification_tokens WHERE token_hash = ?').run(tokenHash);
     return true;
   });
@@ -308,8 +334,12 @@ authRouter.post('/login', authLimiter, asyncRoute(async (req, res) => {
     res.status(401).json({ error: 'Anmeldedaten sind ungültig.' });
     return;
   }
+  if (user.is_banned) {
+    res.status(403).json({ error: `Dein Konto wurde gesperrt. Grund: ${user.ban_reason || 'Verstoß gegen die Regeln'}` });
+    return;
+  }
   if (!user.email_verified) {
-    res.status(403).json({ error: 'Bitte bestätige zuerst deine E-Mail-Adresse.' });
+    res.status(403).json({ error: 'Bitte bestätige zuerst deine E-Mail-Adresse über den Link in deinem Postfach.' });
     return;
   }
 
@@ -401,7 +431,8 @@ authRouter.post('/2fa/enable', requireAuth, asyncRoute(async (req, res) => {
     return;
   }
   db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(user.id);
-  res.json({ message: '2FA wurde erfolgreich aktiviert.' });
+  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  res.json({ message: '2FA wurde erfolgreich aktiviert.', user: publicUser(updatedUser) });
 }));
 
 // ── 2FA: disable – deactivate 2FA with password confirmation ────────────────
@@ -422,7 +453,8 @@ authRouter.post('/2fa/disable', requireAuth, asyncRoute(async (req, res) => {
     return;
   }
   db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').run(user.id);
-  res.json({ message: '2FA wurde deaktiviert.' });
+  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  res.json({ message: '2FA wurde deaktiviert.', user: publicUser(updatedUser) });
 }));
 
 authRouter.post('/refresh', (req, res) => {
@@ -563,10 +595,7 @@ authRouter.post('/reset-password', authLimiter, asyncRoute(async (req, res) => {
 }));
 
 authRouter.get('/me', requireAuth, (req, res) => {
-  const user = db.prepare(`
-    SELECT id, email, username, age, email_verified, avatar_url, created_at
-    FROM users WHERE id = ?
-  `).get(req.auth.sub);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub);
   if (!user) {
     res.status(404).json({ error: 'Konto nicht gefunden.' });
     return;
@@ -592,6 +621,14 @@ authRouter.patch('/me', requireAuth, (req, res) => {
     res.status(400).json({ error: 'Du musst mindestens 13 Jahre alt sein.' });
     return;
   }
+  if (current.totp_enabled && username !== current.username) {
+    const totpCode = typeof req.body.totpCode === 'string' ? req.body.totpCode.replace(/\s+/g, '') : '';
+    if (!totpCode || !authenticator.verify({ token: totpCode, secret: current.totp_secret })) {
+      res.status(400).json({ error: '2FA-Sicherheitscode ist für eine Namensänderung erforderlich oder ungültig.' });
+      return;
+    }
+  }
+
   try {
     db.prepare(`
       UPDATE users SET username = ?, age = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
@@ -604,10 +641,42 @@ authRouter.patch('/me', requireAuth, (req, res) => {
     throw error;
   }
   const updated = db.prepare(`
-    SELECT id, email, username, age, email_verified, avatar_url, created_at FROM users WHERE id = ?
+    SELECT * FROM users WHERE id = ?
   `).get(current.id);
   res.json({ user: publicUser(updated) });
 });
+
+authRouter.post('/change-email', requireAuth, asyncRoute(async (req, res) => {
+  const newEmail = normalizeEmail(req.body.newEmail);
+  const password = req.body.password;
+  if (!isValidEmail(newEmail)) {
+    res.status(400).json({ error: 'Bitte gib eine gültige neue E-Mail-Adresse ein.' });
+    return;
+  }
+  const user = db.prepare('SELECT id, email, password_hash, totp_enabled, totp_secret FROM users WHERE id = ?').get(req.auth.sub);
+  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    res.status(401).json({ error: 'Das Passwort ist nicht korrekt.' });
+    return;
+  }
+  if (user.totp_enabled) {
+    const totpCode = typeof req.body.totpCode === 'string' ? req.body.totpCode.replace(/\s+/g, '') : '';
+    if (!totpCode || !authenticator.verify({ token: totpCode, secret: user.totp_secret })) {
+      res.status(400).json({ error: '2FA-Sicherheitscode ist für eine E-Mail-Änderung erforderlich oder ungültig.' });
+      return;
+    }
+  }
+  try {
+    db.prepare('UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newEmail, user.id);
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      res.status(409).json({ error: 'Diese E-Mail-Adresse wird bereits verwendet.' });
+      return;
+    }
+    throw error;
+  }
+  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  res.json({ message: 'E-Mail-Adresse erfolgreich geändert.', user: publicUser(updatedUser) });
+}));
 
 authRouter.post('/change-password', requireAuth, asyncRoute(async (req, res) => {
   const currentPassword = req.body.currentPassword;
@@ -620,10 +689,17 @@ authRouter.post('/change-password', requireAuth, asyncRoute(async (req, res) => 
     res.status(400).json({ error: 'Das neue Passwort muss mindestens 8 und höchstens 128 Zeichen lang sein.' });
     return;
   }
-  const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.auth.sub);
+  const user = db.prepare('SELECT id, password_hash, totp_enabled, totp_secret FROM users WHERE id = ?').get(req.auth.sub);
   if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
     res.status(401).json({ error: 'Das aktuelle Passwort ist nicht korrekt.' });
     return;
+  }
+  if (user.totp_enabled) {
+    const totpCode = typeof req.body.totpCode === 'string' ? req.body.totpCode.replace(/\s+/g, '') : '';
+    if (!totpCode || !authenticator.verify({ token: totpCode, secret: user.totp_secret })) {
+      res.status(400).json({ error: '2FA-Sicherheitscode ist für eine Passwortänderung erforderlich oder ungültig.' });
+      return;
+    }
   }
   const passwordHash = await bcrypt.hash(newPassword, config.bcryptRounds);
   const revokeSessions = db.transaction(() => {
@@ -660,6 +736,263 @@ authRouter.delete('/me', requireAuth, asyncRoute(async (req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api', createChatRouter({ db, requireAuth, realtime }));
+
+// Discord-Like Status & Profil-Routen
+const userRouter = express.Router();
+userRouter.patch('/status', requireAuth, asyncRoute(async (req, res) => {
+  const allowed = ['online', 'idle', 'dnd', 'offline'];
+  const status = req.body.status;
+  if (!allowed.includes(status)) {
+    res.status(400).json({ error: 'Ungültiger Status. Erlaubt: online, idle, dnd, offline' });
+    return;
+  }
+  const customStatus = typeof req.body.customStatus === 'string' ? req.body.customStatus.slice(0, 100) : null;
+  db.prepare('UPDATE users SET status = ?, custom_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(status, customStatus, req.auth.sub);
+  realtime.publishPresence(req.auth.sub, status !== 'offline');
+  res.json({ status, customStatus });
+}));
+
+userRouter.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
+  const avatarUrl = typeof req.body.avatarUrl === 'string' ? req.body.avatarUrl.trim().slice(0, 500) : null;
+  const bannerUrl = typeof req.body.bannerUrl === 'string' ? req.body.bannerUrl.trim().slice(0, 500) : null;
+  db.prepare(`
+    UPDATE users
+    SET avatar_url = COALESCE(?, avatar_url),
+        banner_url = COALESCE(?, banner_url),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(avatarUrl, bannerUrl, req.auth.sub);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub);
+  res.json({ user: publicUser(user) });
+}));
+app.use('/api/users', userRouter);
+
+// Admin & Moderation (Owner, Admin, Moderator)
+const adminRouter = express.Router();
+adminRouter.get('/users', requireAuth, asyncRoute(async (req, res) => {
+  const current = db.prepare('SELECT role FROM users WHERE id = ?').get(req.auth.sub);
+  if (!current || !['owner', 'admin'].includes(current.role)) {
+    res.status(403).json({ error: 'Nur für Owner und Admins zugänglich.' });
+    return;
+  }
+  const users = db.prepare(`
+    SELECT id, email, username, role, status, custom_status, avatar_url, banner_url, is_banned, ban_reason, banned_at, created_at, last_seen_at
+    FROM users
+    ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'moderator' THEN 3 WHEN 'staff' THEN 4 ELSE 5 END, username ASC
+  `).all();
+  res.json({ users });
+}));
+
+adminRouter.post('/users/:id/role', requireAuth, asyncRoute(async (req, res) => {
+  const current = db.prepare('SELECT email, role FROM users WHERE id = ?').get(req.auth.sub);
+  if (!current || !['owner', 'admin'].includes(current.role)) {
+    res.status(403).json({ error: 'Keine Berechtigung zur Rollenverwaltung.' });
+    return;
+  }
+  const target = db.prepare('SELECT email, role FROM users WHERE id = ?').get(req.params.id);
+  if (!target) {
+    res.status(404).json({ error: 'Benutzer nicht gefunden.' });
+    return;
+  }
+  if (target.role === 'owner' || (config.ownerEmail && target.email.toLowerCase() === config.ownerEmail.toLowerCase())) {
+    res.status(403).json({ error: 'Die Rolle des Owners kann nicht verändert werden!' });
+    return;
+  }
+  const newRole = req.body.role;
+  const allowed = current.role === 'owner' ? ['admin', 'moderator', 'staff', 'member'] : ['moderator', 'staff', 'member'];
+  if (!allowed.includes(newRole)) {
+    res.status(400).json({ error: `Ungültige Rolle. Erlaubt: ${allowed.join(', ')}` });
+    return;
+  }
+  db.prepare('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newRole, req.params.id);
+  res.json({ message: `Rolle erfolgreich auf ${newRole} geändert.` });
+}));
+
+adminRouter.post('/users/:id/ban', requireAuth, asyncRoute(async (req, res) => {
+  const current = db.prepare('SELECT email, role FROM users WHERE id = ?').get(req.auth.sub);
+  if (!current || !['owner', 'admin', 'moderator'].includes(current.role)) {
+    res.status(403).json({ error: 'Keine Berechtigung zum Bannen.' });
+    return;
+  }
+  const target = db.prepare('SELECT email, role FROM users WHERE id = ?').get(req.params.id);
+  if (!target) {
+    res.status(404).json({ error: 'Benutzer nicht gefunden.' });
+    return;
+  }
+  if (target.role === 'owner' || (config.ownerEmail && target.email.toLowerCase() === config.ownerEmail.toLowerCase())) {
+    res.status(403).json({ error: 'Der Owner kann nicht gebannt werden!' });
+    return;
+  }
+  const reason = req.body.reason || 'Verstoß gegen die Serverregeln';
+  db.prepare('UPDATE users SET is_banned = 1, ban_reason = ?, banned_at = CURRENT_TIMESTAMP WHERE id = ?').run(reason, req.params.id);
+  db.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(new Date().toISOString(), req.params.id);
+  realtime.disconnectUser(req.params.id);
+  res.json({ message: 'Benutzer erfolgreich gebannt.' });
+}));
+
+adminRouter.post('/users/:id/unban', requireAuth, asyncRoute(async (req, res) => {
+  const current = db.prepare('SELECT role FROM users WHERE id = ?').get(req.auth.sub);
+  if (!current || !['owner', 'admin'].includes(current.role)) {
+    res.status(403).json({ error: 'Keine Berechtigung zum Entbannen.' });
+    return;
+  }
+  db.prepare('UPDATE users SET is_banned = 0, ban_reason = NULL, banned_at = NULL WHERE id = ?').run(req.params.id);
+  res.json({ message: 'Benutzer erfolgreich entbannt.' });
+}));
+app.use('/api/admin', adminRouter);
+
+// Discord Server & Channel Management
+const serverRouter = express.Router();
+serverRouter.get('/', requireAuth, asyncRoute(async (req, res) => {
+  const servers = db.prepare(`
+    SELECT s.id, s.name, s.icon_url, s.banner_url, s.owner_id, sm.role as my_role
+    FROM servers s
+    JOIN server_members sm ON sm.server_id = s.id AND sm.user_id = ?
+    ORDER BY s.created_at ASC
+  `).all(req.auth.sub);
+  res.json({ servers });
+}));
+
+serverRouter.post('/', requireAuth, asyncRoute(async (req, res) => {
+  const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  if (!name || name.length < 2 || name.length > 50) {
+    res.status(400).json({ error: 'Servername muss 2–50 Zeichen lang sein.' });
+    return;
+  }
+  const iconUrl = typeof req.body.iconUrl === 'string' ? req.body.iconUrl.trim() : null;
+  const serverId = crypto.randomUUID();
+  const channelId = crypto.randomUUID();
+  db.transaction(() => {
+    db.prepare('INSERT INTO servers (id, name, icon_url, owner_id) VALUES (?, ?, ?, ?)').run(serverId, name, iconUrl, req.auth.sub);
+    db.prepare("INSERT INTO server_members (server_id, user_id, role) VALUES (?, ?, 'owner')").run(serverId, req.auth.sub);
+    db.prepare("INSERT INTO channels (id, server_id, name, type) VALUES (?, ?, 'allgemein', 'text')").run(channelId, serverId);
+    db.prepare("INSERT INTO conversations (id, type, name, created_by) VALUES (?, 'group', ?, ?)").run(channelId, `#allgemein`, req.auth.sub);
+    db.prepare("INSERT INTO conversation_members (conversation_id, user_id, role) VALUES (?, ?, 'admin')").run(channelId, req.auth.sub);
+  })();
+  res.status(201).json({ id: serverId, name, iconUrl, defaultChannelId: channelId });
+}));
+
+serverRouter.get('/:id/channels', requireAuth, asyncRoute(async (req, res) => {
+  const isMember = db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(req.params.id, req.auth.sub);
+  if (!isMember) {
+    res.status(403).json({ error: 'Kein Mitglied dieses Servers.' });
+    return;
+  }
+  const channels = db.prepare('SELECT * FROM channels WHERE server_id = ? ORDER BY position ASC, created_at ASC').all(req.params.id);
+  res.json({ channels });
+}));
+
+serverRouter.post('/:id/channels', requireAuth, asyncRoute(async (req, res) => {
+  const member = db.prepare('SELECT role FROM server_members WHERE server_id = ? AND user_id = ?').get(req.params.id, req.auth.sub);
+  if (!member || !['owner', 'admin'].includes(member.role)) {
+    res.status(403).json({ error: 'Nur Server-Owner oder Admins können Kanäle erstellen.' });
+    return;
+  }
+  const name = typeof req.body.name === 'string' ? req.body.name.trim().toLowerCase().replace(/\s+/g, '-') : '';
+  if (!name || name.length < 2 || name.length > 40) {
+    res.status(400).json({ error: 'Kanalname muss 2–40 Zeichen lang sein.' });
+    return;
+  }
+  const channelId = crypto.randomUUID();
+  db.transaction(() => {
+    db.prepare('INSERT INTO channels (id, server_id, name, topic) VALUES (?, ?, ?, ?)').run(channelId, req.params.id, name, req.body.topic || null);
+    db.prepare("INSERT INTO conversations (id, type, name, created_by) VALUES (?, 'group', ?, ?)").run(channelId, `#${name}`, req.auth.sub);
+    const members = db.prepare('SELECT user_id, role FROM server_members WHERE server_id = ?').all(req.params.id);
+    const insertMember = db.prepare("INSERT OR IGNORE INTO conversation_members (conversation_id, user_id, role) VALUES (?, ?, ?)");
+    for (const m of members) {
+      insertMember.run(channelId, m.user_id, m.role === 'owner' ? 'admin' : 'member');
+    }
+  })();
+  res.status(201).json({ id: channelId, name, serverId: req.params.id });
+}));
+app.use('/api/servers', serverRouter);
+
+function getLatestReleaseInfo() {
+  const fs = require('node:fs');
+  const releaseDir = path.join(__dirname, '../../release');
+  let version = '1.0.0';
+  let fileName = 'Mingle-Setup-1.0.0.exe';
+  let filePath = path.join(releaseDir, fileName);
+  let fileSizeMb = 112;
+  let releaseDate = new Date().toISOString();
+
+  if (fs.existsSync(releaseDir)) {
+    const latestYmlPath = path.join(releaseDir, 'latest.yml');
+    if (fs.existsSync(latestYmlPath)) {
+      try {
+        const ymlContent = fs.readFileSync(latestYmlPath, 'utf8');
+        const vMatch = ymlContent.match(/^version:\s*['"]?([0-9.]+)/m);
+        const pMatch = ymlContent.match(/^path:\s*['"]?([^'"\r\n]+)/m);
+        const dMatch = ymlContent.match(/^releaseDate:\s*['"]?([^'"\r\n]+)/m);
+        if (vMatch) version = vMatch[1];
+        if (pMatch) fileName = pMatch[1];
+        if (dMatch) releaseDate = dMatch[1];
+        const candidate = path.join(releaseDir, fileName);
+        if (fs.existsSync(candidate)) {
+          filePath = candidate;
+          fileSizeMb = +(fs.statSync(candidate).size / (1024 * 1024)).toFixed(1);
+          return { exists: true, version, fileName, filePath, fileSizeMb, releaseDate };
+        }
+      } catch {}
+    }
+
+    try {
+      const files = fs.readdirSync(releaseDir)
+        .filter((f) => f.startsWith('Mingle-Setup-') && f.endsWith('.exe'))
+        .map((f) => ({
+          name: f,
+          path: path.join(releaseDir, f),
+          stat: fs.statSync(path.join(releaseDir, f))
+        }))
+        .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+
+      if (files.length > 0) {
+        const newest = files[0];
+        const vMatch = newest.name.match(/Mingle-Setup-([0-9.]+)\.exe/i);
+        if (vMatch) version = vMatch[1];
+        return {
+          exists: true,
+          version,
+          fileName: newest.name,
+          filePath: newest.path,
+          fileSizeMb: +(newest.stat.size / (1024 * 1024)).toFixed(1),
+          releaseDate: newest.stat.mtime.toISOString()
+        };
+      }
+    } catch {}
+  }
+
+  return { exists: false, version, fileName, filePath, fileSizeMb, releaseDate };
+}
+
+// Auto-Update Endpunkt für die Desktop-App (electron-updater)
+app.use('/update', express.static(path.join(__dirname, '../../release')));
+
+// API-Endpunkt für Release-Metadaten (Version, Setup-Dateiname, Größe)
+app.get('/api/release/info', (req, res) => {
+  const info = getLatestReleaseInfo();
+  res.json({
+    version: info.version,
+    fileName: info.fileName,
+    fileSizeMb: info.fileSizeMb,
+    releaseDate: info.releaseDate,
+    downloadUrl: '/download',
+    ready: info.exists
+  });
+});
+
+// Download-Endpunkt für Windows: Liefert immer automatisch die neueste Setup.exe aus
+app.get(['/download', '/download/windows', '/api/download/windows'], (req, res) => {
+  const info = getLatestReleaseInfo();
+  if (info.exists) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    return res.download(info.filePath, info.fileName);
+  }
+  res.redirect('https://github.com/timrex011/mingle-messenger/releases');
+});
 
 if (config.serveClient) {
   app.use(express.static(path.join(__dirname, '../../client/dist'), {

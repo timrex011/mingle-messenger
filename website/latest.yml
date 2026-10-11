@@ -1,0 +1,8 @@
+version: 1.0.0
+files:
+  - url: Mingle-Setup-1.0.0.exe
+    sha512: 1zvhDgGoPtKSAipc6g4d6rNrvOMNshHNB6ig7BdmziGpJwBJQc6z7snf9BOf/tQR8KeRbg6jBE4OOOttNGJ5mA==
+    size: 112538805
+path: Mingle-Setup-1.0.0.exe
+sha512: 1zvhDgGoPtKSAipc6g4d6rNrvOMNshHNB6ig7BdmziGpJwBJQc6z7snf9BOf/tQR8KeRbg6jBE4OOOttNGJ5mA==
+releaseDate: '2026-10-11T12:30:00.317Z'

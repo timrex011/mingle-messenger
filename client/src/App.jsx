@@ -31,6 +31,7 @@ import {
   X
 } from 'lucide-react';
 import { request, requestBlob } from './api';
+import LandingPage from './LandingPage';
 
 function Brand({ compact = false }) {
   return (
@@ -140,7 +141,7 @@ function MessageAttachment({ attachment, token, onToken }) {
   </div>;
 }
 
-function AuthPage({ onSession, initialMode = 'login' }) {
+function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
   const [mode, setMode] = useState(initialMode);
   const [form, setForm] = useState({ email: '', password: '', username: '', age: '' });
   const [busy, setBusy] = useState(false);
@@ -301,6 +302,11 @@ function AuthPage({ onSession, initialMode = 'login' }) {
           <h1>In Verbindung.<br /><em>Ganz bei dir.</em></h1>
           <p>Teile Momente, Gedanken und alles dazwischen — einfach und sicher.</p>
           <div className="art-trust"><ShieldCheck size={17} /> Privat. Sicher. Ohne Telefonnummer.</div>
+          <div style={{ margin: '18px 0 0' }}>
+            <a href="/download" className="button button-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none', padding: '10px 18px', borderRadius: 999, fontWeight: 600, fontSize: '0.95rem' }}>
+              <Download size={16} /> Für Windows herunterladen
+            </a>
+          </div>
         </div>
         <div className="art-footer"><span>© 2026 mingle</span><span>Mit Ruhe verbunden</span></div>
       </section>
@@ -368,7 +374,18 @@ function AuthPage({ onSession, initialMode = 'login' }) {
 
           <div className="auth-assurance"><ShieldCheck size={16} /><span>Deine Daten bleiben bei dir. Wir fragen nie nach deiner Telefonnummer.</span></div>
         </div>
-        <div className="auth-panel-footer"><button><CircleHelp size={15} /> Hilfe & Datenschutz</button><span>Deutsch <ChevronDown size={13} /></span></div>
+        <div className="auth-panel-footer">
+          {onBackToLanding && (
+            <button className="text-button" onClick={onBackToLanding} style={{ fontSize: '0.85rem' }}>
+              <ArrowLeft size={13} /> Startseite
+            </button>
+          )}
+          <a href="/download" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', textDecoration: 'none', fontSize: '0.85rem' }}>
+            <Download size={14} /> Desktop-App
+          </a>
+          <button><CircleHelp size={15} /> Hilfe & Datenschutz</button>
+          <span>Deutsch <ChevronDown size={13} /></span>
+        </div>
       </section>
     </main>
   );
@@ -452,8 +469,15 @@ function ResetPasswordPage({ onBack }) {
 function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
   const [username, setUsername] = useState(user.username);
   const [age, setAge] = useState(String(user.age));
+  const [profileTotpCode, setProfileTotpCode] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [passwordTotpCode, setPasswordTotpCode] = useState('');
+
+  const [newEmail, setNewEmail] = useState('');
+  const [emailPassword, setEmailPassword] = useState('');
+  const [emailTotpCode, setEmailTotpCode] = useState('');
+
   const [deletePassword, setDeletePassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -468,14 +492,48 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
     setError('');
     setMessage('');
     try {
+      const body = { username, age: Number(age) };
+      if (user.totpEnabled && username !== user.username) {
+        body.totpCode = profileTotpCode;
+      }
       const result = await request('/auth/me', {
         method: 'PATCH',
         token,
         onToken,
-        body: { username, age: Number(age) }
+        body
       });
       onUserChange(result.user);
+      setProfileTotpCode('');
       setMessage('Dein Profil wurde aktualisiert.');
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeEmail(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const body = { newEmail, password: emailPassword };
+      if (user.totpEnabled) {
+        body.totpCode = emailTotpCode;
+      }
+      const result = await request('/auth/change-email', {
+        method: 'POST',
+        token,
+        onToken,
+        body
+      });
+      if (result.user) onUserChange(result.user);
+      else onUserChange({ ...user, email: newEmail });
+      setMessage(result.message || 'E-Mail-Adresse erfolgreich geändert.');
+      setNewEmail('');
+      setEmailPassword('');
+      setEmailTotpCode('');
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -489,10 +547,20 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
     setError('');
     setMessage('');
     try {
-      await request('/auth/change-password', { method: 'POST', token, onToken, body: { currentPassword, newPassword } });
+      const body = { currentPassword, newPassword };
+      if (user.totpEnabled) {
+        body.totpCode = passwordTotpCode;
+      }
+      await request('/auth/change-password', {
+        method: 'POST',
+        token,
+        onToken,
+        body
+      });
       setMessage('Passwort geändert. Bitte melde dich erneut an.');
       setCurrentPassword('');
       setNewPassword('');
+      setPasswordTotpCode('');
       window.setTimeout(onLogout, 900);
     } catch (requestError) {
       setError(requestError.message);
@@ -523,14 +591,38 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
       </div>
       {(message || error) && <div className={`form-message ${error ? 'error' : 'success'}`} role={error ? 'alert' : 'status'}>{error || message}</div>}
       <section className="settings-card">
-        <div className="settings-card-title"><span className="settings-icon"><UserRound size={18} /></span><div><h2>Profil</h2><p>So sehen dich andere in mingle.</p></div></div>
+        <div className="settings-card-title"><span className="settings-icon"><UserRound size={18} /></span><div><h2>Profil &amp; Benutzername</h2><p>Passe deinen Benutzernamen an.</p></div></div>
         <form className="settings-form" onSubmit={saveProfile}>
-          <label className="field"><span>E-Mail-Adresse</span><input className="plain-input readonly" value={user.email} readOnly /><small>Deine E-Mail-Adresse kann nicht geändert werden.</small></label>
+          <label className="field"><span>Aktuelle E-Mail</span><input className="plain-input readonly" value={user.email} readOnly /></label>
           <div className="settings-fields">
             <label className="field"><span>Benutzername</span><input className="plain-input" value={username} onChange={(event) => setUsername(event.target.value)} minLength="3" maxLength="20" required /></label>
             <label className="field"><span>Alter</span><input className="plain-input" type="number" value={age} onChange={(event) => setAge(event.target.value)} min="13" max="120" required /></label>
           </div>
+          {user.totpEnabled && username !== user.username && (
+            <div style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:10,padding:'12px 14px',margin:'10px 0'}}>
+              <p style={{fontSize:'0.85rem',fontWeight:700,color:'#818cf8',margin:'0 0 6px',display:'flex',alignItems:'center',gap:6}}>
+                <ShieldCheck size={15}/> 2FA-Sicherheitsabfrage für Namensänderung
+              </p>
+              <label className="field"><span>6-stelliger Authenticator-Code</span><input className="plain-input" value={profileTotpCode} onChange={(e)=>setProfileTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
+            </div>
+          )}
           <button className="button button-dark" disabled={busy}>Änderungen speichern</button>
+        </form>
+      </section>
+      <section className="settings-card">
+        <div className="settings-card-title"><span className="settings-icon blue"><ShieldCheck size={18} /></span><div><h2>E-Mail-Adresse ändern</h2><p>Aktuelle E-Mail: <b>{user.email}</b></p></div></div>
+        <form className="settings-form" onSubmit={changeEmail}>
+          <label className="field"><span>Neue E-Mail-Adresse</span><input className="plain-input" type="email" value={newEmail} onChange={(e)=>setNewEmail(e.target.value)} placeholder="neu@beispiel.de" required /></label>
+          <label className="field"><span>Aktuelles Passwort bestätigen</span><input className="plain-input" type="password" value={emailPassword} onChange={(e)=>setEmailPassword(e.target.value)} autoComplete="current-password" required /></label>
+          {user.totpEnabled && (
+            <div style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:10,padding:'12px 14px',margin:'10px 0'}}>
+              <p style={{fontSize:'0.85rem',fontWeight:700,color:'#818cf8',margin:'0 0 6px',display:'flex',alignItems:'center',gap:6}}>
+                <ShieldCheck size={15}/> 2FA-Sicherheitsabfrage für E-Mail-Änderung
+              </p>
+              <label className="field"><span>6-stelliger Authenticator-Code</span><input className="plain-input" value={emailTotpCode} onChange={(e)=>setEmailTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
+            </div>
+          )}
+          <button className="button button-dark" disabled={busy}>E-Mail aktualisieren</button>
         </form>
       </section>
       <section className="settings-card">
@@ -538,6 +630,14 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
         <form className="settings-form" onSubmit={changePassword}>
           <label className="field"><span>Aktuelles Passwort</span><input className="plain-input" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required /></label>
           <label className="field"><span>Neues Passwort</span><input className="plain-input" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength="8" maxLength="128" autoComplete="new-password" required /></label>
+          {user.totpEnabled && (
+            <div style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:10,padding:'12px 14px',margin:'10px 0'}}>
+              <p style={{fontSize:'0.85rem',fontWeight:700,color:'#818cf8',margin:'0 0 6px',display:'flex',alignItems:'center',gap:6}}>
+                <ShieldCheck size={15}/> 2FA-Sicherheitsabfrage für Passwortänderung
+              </p>
+              <label className="field"><span>6-stelliger Authenticator-Code</span><input className="plain-input" value={passwordTotpCode} onChange={(e)=>setPasswordTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
+            </div>
+          )}
           <button className="button button-dark" disabled={busy}>Passwort aktualisieren</button>
         </form>
       </section>
@@ -565,7 +665,7 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
                 const result = await request('/auth/2fa/enable', { method: 'POST', token, onToken, body: { code: totpCode } });
                 setMessage(result.message);
                 setTotpSetup(null); setTotpCode('');
-                onUserChange({ ...user, totpEnabled: true });
+                onUserChange(result.user || { ...user, totpEnabled: true });
               } catch (e) { setError(e.message); } finally { setBusy(false); }
             }}>
               <label className="field"><span>6-stelliger Code aus der App</span><input className="plain-input" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
@@ -579,13 +679,22 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
             try {
               const result = await request('/auth/2fa/disable', { method: 'POST', token, onToken, body: { password: disablePassword } });
               setMessage(result.message); setDisablePassword('');
-              onUserChange({ ...user, totpEnabled: false });
+              onUserChange(result.user || { ...user, totpEnabled: false });
             } catch (e) { setError(e.message); } finally { setBusy(false); }
           }}>
             <label className="field"><span>Passwort bestätigen</span><input className="plain-input" type="password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} autoComplete="current-password" required /></label>
             <button className="button button-danger" disabled={busy}>2FA deaktivieren</button>
           </form>
         )}
+      </section>
+      <section className="settings-card">
+        <div className="settings-card-title"><span className="settings-icon mint"><Download size={18} /></span><div><h2>Desktop-App für Windows</h2><p>Mingle wie Discord direkt auf deinem PC installieren.</p></div></div>
+        <div className="settings-form">
+          <p style={{ fontSize: '0.92rem', color: 'var(--text-muted)', marginBottom: 12 }}>Profitiere von direkten Desktop-Benachrichtigungen, Taskleisten-Integration und schnellem Start.</p>
+          <a href="/download" className="button button-dark" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none', width: 'fit-content' }}>
+            <Download size={16} /> Mingle-Installer herunterladen (.exe)
+          </a>
+        </div>
       </section>
       <section className="settings-card danger-card">
         <div className="settings-card-title"><span className="settings-icon rose"><X size={18} /></span><div><h2>Konto löschen</h2><p>Diese Aktion kann nicht rückgängig gemacht werden.</p></div></div>
@@ -1431,6 +1540,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
   const [authMode, setAuthMode] = useState('login');
+  const [showLanding, setShowLanding] = useState(!window.electronAPI && window.location.pathname === '/');
   const [theme, setTheme] = useState(() => window.localStorage.getItem('mingle-theme') || 'light');
   const [page, setPage] = useState(window.location.pathname);
   const refreshStarted = useRef(false);
@@ -1472,7 +1582,16 @@ export default function App() {
   }
   if (page === '/verify-email') return <VerifyPage onBack={goToLogin} />;
   if (page === '/reset-password') return <ResetPasswordPage onBack={goToLogin} />;
-  if (!session) return <AuthPage initialMode={authMode} onSession={setSession} />;
+  if (showLanding && !session) {
+    return (
+      <LandingPage
+        onOpenApp={() => setShowLanding(false)}
+        onOpenLogin={() => { setAuthMode('login'); setShowLanding(false); }}
+        onOpenRegister={() => { setAuthMode('register'); setShowLanding(false); }}
+      />
+    );
+  }
+  if (!session) return <AuthPage initialMode={authMode} onSession={setSession} onBackToLanding={() => setShowLanding(true)} />;
   return (
     <ChatWorkspace
       user={session.user}

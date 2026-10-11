@@ -62,6 +62,9 @@ module.exports = {
   serveClient: isProduction || isDesktop || process.env.SERVE_CLIENT === 'true' || require('node:fs').existsSync(path.join(__dirname, '../../client/dist/index.html')),
   useSecureCookies,
   autoVerifyEmail: isDesktop ? true : process.env.AUTO_VERIFY_EMAIL === 'true',
+  ownerEmail: (process.env.OWNER_EMAIL || 'riftduels4@gmail.com').trim().toLowerCase(),
+  tursoDatabaseUrl: process.env.TURSO_DATABASE_URL || '',
+  tursoAuthToken: process.env.TURSO_AUTH_TOKEN || '',
   isDesktop,
   isProduction
 };

@@ -223,14 +223,106 @@ ipcMain.handle('set-server-url', async (_event, targetUrl) => {
   const cleanUrl = targetUrl.trim().replace(/\/+$/, '');
   await verifyHealth(cleanUrl);
   saveServerUrl(cleanUrl);
+  configureUpdaterFeed(cleanUrl);
   await loadServiceUrl(cleanUrl);
   return true;
 });
+
+let autoUpdater = null;
+try {
+  const updaterModule = require('./updater.cjs');
+  autoUpdater = updaterModule.autoUpdater;
+} catch (e1) {
+  try {
+    const updaterModule = require('electron-updater');
+    autoUpdater = updaterModule.autoUpdater;
+  } catch (e2) {}
+}
+
+function configureUpdaterFeed(serviceUrl) {
+  if (!autoUpdater || !serviceUrl) return;
+  try {
+    const cleanUrl = serviceUrl.trim().replace(/\/+$/, '');
+    const feedUrl = `${cleanUrl}/update/`;
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: feedUrl
+    });
+    console.info('[Update] Feed-URL gesetzt auf:', feedUrl);
+  } catch (err) {
+    console.warn('[Update] Feed-URL konnte nicht gesetzt werden:', err.message);
+  }
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged || !autoUpdater) return;
+  try {
+    const savedUrl = getSavedServerUrl();
+    if (savedUrl) {
+      configureUpdaterFeed(savedUrl);
+    }
+
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('checking-for-update', () => {
+      console.info('[Update] Suche nach Mingle Updates...');
+    });
+
+    autoUpdater.on('update-available', (info) => {
+      console.info('[Update] Neue Version verfügbar (wird geladen):', info.version);
+    });
+
+    autoUpdater.on('update-not-available', (info) => {
+      console.info('[Update] Mingle ist auf dem neuesten Stand:', info?.version);
+    });
+
+    autoUpdater.on('download-progress', (progressObj) => {
+      console.info(`[Update] Herunterladen: ${Math.round(progressObj.percent)}%`);
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      console.info('[Update] Update heruntergeladen:', info.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Mingle – Update bereit',
+          message: `Mingle wurde auf Version ${info.version} aktualisiert!`,
+          detail: 'Möchtest du Mingle jetzt neu starten, um die neueste Version wie bei Discord direkt anzuwenden?',
+          buttons: ['Jetzt neu starten', 'Später beim Beenden'],
+          defaultId: 0,
+          cancelId: 1
+        }).then((choice) => {
+          if (choice.response === 0) {
+            autoUpdater.quitAndInstall();
+          }
+        });
+      }
+    });
+
+    autoUpdater.on('error', (err) => {
+      console.warn('[Update] Auto-Update-Status:', err?.message || err);
+    });
+
+    // Sofortige Prüfung beim App-Start wie bei Discord
+    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+      console.warn('[Update] Start-Check:', err.message);
+    });
+
+    // Wiederkehrende Prüfung im Hintergrund alle 20 Minuten
+    setInterval(() => {
+      autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+    }, 20 * 60 * 1000);
+  } catch (err) {
+    console.warn('[Update] Initialisierungsfehler:', err.message);
+  }
+}
 
 app.whenReady().then(() => {
   if (!verifyAppIntegrity()) return;
   setupMenu();
   createWindow();
+  setupAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -240,3 +332,4 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+

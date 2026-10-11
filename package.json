@@ -11,7 +11,7 @@
     "build": "npm run build --prefix client",
     "email:test": "node server/src/email-check.js",
     "desktop:dev": "electron .",
-    "desktop:dist": "npm run build && node desktop/prepare-runtime.cjs && node desktop/build-integrity.cjs && electron-builder --win nsis --x64",
+    "desktop:dist": "npm run build && node desktop/bundle-updater.cjs && node desktop/build-integrity.cjs && electron-builder --win nsis --x64",
     "test": "node --test"
   },
   "devDependencies": {
@@ -30,6 +30,7 @@
       "desktop/main.cjs",
       "desktop/preload.cjs",
       "desktop/connect.html",
+      "desktop/updater.cjs",
       "desktop/integrity.json",
       "desktop/icon.ico",
       "desktop/icon.png",
@@ -65,6 +66,7 @@
       "oneClick": true,
       "perMachine": false,
       "allowElevation": false,
+      "include": "build/installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Mingle",
@@ -74,7 +76,13 @@
       "uninstallerIcon": "desktop/icon.ico",
       "installerHeaderIcon": "desktop/icon.ico",
       "artifactName": "Mingle-Setup-${version}.exe"
-    }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://mingle-messenger-q6zt.onrender.com/update/"
+      }
+    ]
   },
   "engines": {
     "node": "20.x"
@@ -85,6 +93,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "electron-updater": "^6.8.9",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
