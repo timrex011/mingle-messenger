@@ -20,8 +20,7 @@ import {
   Settings,
   Plus,
   Compass,
-  Check,
-  UserPlus
+  Check
 } from 'lucide-react';
 
 export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) {
@@ -69,7 +68,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
               Anmelden
             </button>
             <button className="button-nav-app" onClick={onOpenApp}>
-              <span>Im Browser chatten</span>
+              <span>Im Browser öffnen</span>
               <ArrowRight size={15} />
             </button>
           </div>
@@ -105,13 +104,13 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
             <ArrowRight size={18} />
           </button>
 
-          <button className="btn-hero-primary" onClick={onOpenRegister}>
-            <UserPlus size={20} />
+          <a className="btn-hero-primary" href="/download">
+            <Monitor size={20} />
             <div className="btn-text-block">
-              <span className="btn-main-label">Kostenlos registrieren</span>
-              <span className="btn-sub-label">Direkt online loslegen</span>
+              <span className="btn-main-label">Installieren</span>
+              <span className="btn-sub-label">Windows-App · Auto-Updates</span>
             </div>
-          </button>
+          </a>
         </div>
 
         <div className="hero-highlights">
@@ -425,15 +424,15 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
             <div className="download-actions">
               <button className="btn-box-browser" onClick={onOpenApp}>
                 <MessageSquare size={20} />
-                <span>Web-App starten</span>
+                <span>Im Browser öffnen</span>
               </button>
-              <button className="btn-hero-primary" onClick={onOpenRegister}>
-                <UserPlus size={20} />
+              <a className="btn-hero-primary" href="/download">
+                <Monitor size={20} />
                 <div className="btn-text-block">
-                  <span className="btn-main-label">Kostenlos registrieren</span>
-                  <span className="btn-sub-label">In unter einer Minute</span>
+                  <span className="btn-main-label">Installieren</span>
+                  <span className="btn-sub-label">Windows-App · Auto-Updates</span>
                 </div>
-              </button>
+              </a>
             </div>
           </div>
         </div>
