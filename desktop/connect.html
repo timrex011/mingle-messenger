@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mingle – Server verbinden</title>
+  <title>Mingle</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -19,166 +19,84 @@
     }
     .card {
       background: #161b22;
-      border: 1px solid #30363d;
+      border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 16px;
       padding: 36px 32px;
-      max-width: 440px;
+      max-width: 420px;
       width: 100%;
       box-shadow: 0 20px 40px rgba(0,0,0,0.5);
       text-align: center;
     }
-    .logo {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 56px;
-      height: 56px;
-      background: linear-gradient(135deg, #6366f1, #a855f7);
-      border-radius: 14px;
-      margin-bottom: 20px;
-      box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35);
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(99, 102, 241, 0.2);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 1s infinite linear;
+      margin: 0 auto 20px;
     }
-    .logo svg { width: 30px; height: 30px; fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-    h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; color: #f0f6fc; }
-    p { font-size: 13px; color: #8b949e; line-height: 1.5; margin-bottom: 24px; }
-    .input-group { text-align: left; margin-bottom: 16px; }
-    label { display: block; font-size: 12px; font-weight: 600; color: #c9d1d9; margin-bottom: 6px; }
-    input {
-      width: 100%;
-      background: #0d1117;
-      border: 1px solid #30363d;
-      border-radius: 10px;
-      padding: 12px 14px;
-      font-size: 14px;
-      color: #f0f6fc;
-      outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
-    input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
-    .btn-primary {
-      width: 100%;
-      background: linear-gradient(135deg, #6366f1, #4f46e5);
-      border: none;
-      border-radius: 10px;
-      padding: 13px;
-      font-size: 14px;
-      font-weight: 600;
-      color: #ffffff;
-      cursor: pointer;
-      transition: transform 0.1s, opacity 0.2s;
-      margin-top: 4px;
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 8px; color: #f0f6fc; }
+    p { font-size: 13px; color: #8b949e; line-height: 1.5; margin-bottom: 20px; }
+    .status {
+      font-size: 12px;
+      color: #6366f1;
+      font-weight: 500;
     }
-    .btn-primary:hover { opacity: 0.95; }
-    .btn-primary:active { transform: scale(0.98); }
-    .divider {
-      display: flex;
-      align-items: center;
-      margin: 20px 0;
-      color: #484f58;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #30363d; }
-    .divider span { padding: 0 10px; }
-    .btn-secondary {
-      width: 100%;
+    .retry-btn {
+      margin-top: 18px;
       background: #21262d;
       border: 1px solid #30363d;
-      border-radius: 10px;
-      padding: 11px;
-      font-size: 13px;
-      font-weight: 500;
       color: #c9d1d9;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-size: 13px;
       cursor: pointer;
-      transition: background 0.2s, border-color 0.2s;
+      transition: background 0.2s;
     }
-    .btn-secondary:hover { background: #30363d; border-color: #8b949e; }
-    .status {
-      margin-top: 14px;
-      font-size: 12px;
-      min-height: 18px;
-    }
-    .status.error { color: #f85149; }
-    .status.loading { color: #58a6ff; }
+    .retry-btn:hover { background: #30363d; }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="logo">
-      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-    </div>
-    <h1>Mingle Messenger</h1>
-    <p>Verbinde dich mit dem gemeinsamen Messenger-Server, um in Echtzeit mit allen Nutzern zu chatten.</p>
-    
-    <div class="input-group">
-      <label for="url">Server-Adresse</label>
-      <input type="text" id="url" placeholder="https://deine-app.onrender.com" spellcheck="false" />
-    </div>
-
-    <button class="btn-primary" id="connectBtn" onclick="saveAndConnect()">Mit Server verbinden</button>
-
-    <div class="divider"><span>oder</span></div>
-
-    <button class="btn-secondary" onclick="connectLocal()">Lokaler Server (http://localhost:3000)</button>
-
-    <div class="status" id="status"></div>
+    <div class="spinner"></div>
+    <h1>Verbindung wird aufgebaut...</h1>
+    <p>Mingle stellt automatisch eine Verbindung her. Bitte warte einen kurzen Moment.</p>
+    <div class="status" id="countdown">Nächster Versuch in 3s...</div>
+    <button class="retry-btn" onclick="retryNow()">Jetzt erneut versuchen</button>
   </div>
 
   <script>
-    const urlInput = document.getElementById('url');
-    const statusEl = document.getElementById('status');
-    const connectBtn = document.getElementById('connectBtn');
+    let secondsLeft = 3;
+    let timer = null;
 
-    window.addEventListener('DOMContentLoaded', async () => {
-      if (window.electronAPI && window.electronAPI.getLastUrl) {
-        const last = await window.electronAPI.getLastUrl();
-        if (last) urlInput.value = last;
-      }
-      urlInput.focus();
-    });
-
-    urlInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') saveAndConnect();
-    });
-
-    async function checkAndConnect(targetUrl) {
-      statusEl.className = 'status loading';
-      statusEl.textContent = 'Verbindung wird geprüft...';
-      connectBtn.disabled = true;
-
-      try {
-        let cleanUrl = targetUrl.trim().replace(/\/+$/, '');
-        if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-          cleanUrl = 'https://' + cleanUrl;
-        }
-
-        if (window.electronAPI && window.electronAPI.setServerUrl) {
-          await window.electronAPI.setServerUrl(cleanUrl);
-        } else {
-          window.location.href = cleanUrl;
-        }
-      } catch (err) {
-        statusEl.className = 'status error';
-        statusEl.textContent = err.message || 'Verbindung fehlgeschlagen';
-        connectBtn.disabled = false;
+    function tick() {
+      secondsLeft--;
+      if (secondsLeft <= 0) {
+        retryNow();
+      } else {
+        document.getElementById('countdown').textContent = `Nächster Versuch in ${secondsLeft}s...`;
       }
     }
 
-    function saveAndConnect() {
-      const val = urlInput.value.trim();
-      if (!val) {
-        statusEl.className = 'status error';
-        statusEl.textContent = 'Bitte eine Server-Adresse eingeben.';
-        return;
+    function retryNow() {
+      clearInterval(timer);
+      document.getElementById('countdown').textContent = 'Prüfe Verbindung...';
+      if (window.electronAPI && window.electronAPI.setServerUrl) {
+        window.electronAPI.setServerUrl('auto').catch(() => {
+          secondsLeft = 3;
+          timer = setInterval(tick, 1000);
+        });
+      } else {
+        window.location.reload();
       }
-      checkAndConnect(val);
     }
 
-    function connectLocal() {
-      urlInput.value = 'http://localhost:3000';
-      checkAndConnect('http://localhost:3000');
-    }
+    timer = setInterval(tick, 1000);
   </script>
 </body>
 </html>

@@ -50,7 +50,7 @@ code{background:rgba(129,140,248,.12);padding:2px 7px;border-radius:6px;font-siz
 .btn-nav-login:hover{background:#6366f1;color:#fff;transform:translateY(-1px)}
 
 /* ── Hero ── */
-.hero{position:relative;text-align:center;padding:36px 24px 50px;max-width:880px;margin:0 auto;overflow:visible}
+.hero{position:relative;text-align:center;padding:16px 20px 36px;max-width:880px;margin:0 auto;overflow:visible}
 .hero-glow{position:absolute;top:0;left:50%;transform:translateX(-50%);width:600px;height:380px;background:radial-gradient(ellipse,rgba(99,102,241,.18) 0%,transparent 70%);pointer-events:none;z-index:0}
 .hero>*{position:relative;z-index:1}
 
@@ -164,7 +164,7 @@ code{background:rgba(129,140,248,.12);padding:2px 7px;border-radius:6px;font-siz
 /* ── Responsive ── */
 @media(max-width:768px){
   .nav-links{display:none}
-  .hero{padding:110px 20px 60px}
+  .hero{padding:16px 16px 36px}
   .hero-heading{font-size:2rem}
   .hero-actions{flex-direction:column;align-items:center}
   .hero-highlights{flex-direction:column;align-items:center}

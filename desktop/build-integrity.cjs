@@ -5,7 +5,8 @@ const path = require('node:path');
 const desktopDir = __dirname;
 const filesToProtect = [
   'preload.cjs',
-  'connect.html'
+  'connect.html',
+  'splash.html'
 ];
 
 const hashes = {};

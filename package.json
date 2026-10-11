@@ -1,6 +1,6 @@
 {
   "name": "messenger-app",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "A secure, email-based real-time messenger",
   "author": "Mingle",
@@ -29,6 +29,7 @@
     "files": [
       "desktop/main.cjs",
       "desktop/preload.cjs",
+      "desktop/splash.html",
       "desktop/connect.html",
       "desktop/updater.cjs",
       "desktop/integrity.json",
@@ -79,8 +80,9 @@
     },
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://mingle-messenger-q6zt.onrender.com/update/"
+        "provider": "github",
+        "owner": "timrex011",
+        "repo": "mingle-messenger"
       }
     ]
   },

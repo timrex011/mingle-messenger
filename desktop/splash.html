@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mingle</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-app-region: drag;
+    }
+    body {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at 50% 20%, #1a1d2e 0%, #0b0d13 75%);
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+    }
+    .logo-container {
+      position: relative;
+      margin-bottom: 22px;
+    }
+    .logo-glow {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 110px;
+      height: 110px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.45) 0%, rgba(99, 102, 241, 0) 70%);
+      filter: blur(14px);
+      animation: pulse 2.5s infinite ease-in-out;
+    }
+    .logo-img {
+      position: relative;
+      width: 76px;
+      height: 76px;
+      object-fit: contain;
+      border-radius: 18px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+    }
+    @keyframes pulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
+      50% { transform: translate(-50%, -50%) scale(1.15); opacity: 0.95; }
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #ffffff 40%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+    }
+    .sub {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 28px;
+    }
+    .status-box {
+      width: 260px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-text {
+      font-size: 13px;
+      color: #94a3b8;
+      text-align: center;
+      font-weight: 500;
+      min-height: 20px;
+    }
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-bar-fill {
+      width: 30%;
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6, #ec4899);
+      border-radius: 999px;
+      transition: width 0.2s ease;
+    }
+    .progress-indeterminate {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 45%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, #6366f1, #8b5cf6, transparent);
+      animation: indeterminate 1.4s infinite ease-in-out;
+    }
+    @keyframes indeterminate {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(250%); }
+    }
+  </style>
+</head>
+<body>
+  <div class="logo-container">
+    <div class="logo-glow"></div>
+    <img src="./icon.png" class="logo-img" alt="Mingle" onerror="this.style.display='none'" />
+  </div>
+  <h1>Mingle</h1>
+  <div class="sub">Dein Raum für echte Gespräche</div>
+  <div class="status-box">
+    <div class="status-text" id="status-label">Suche nach Updates...</div>
+    <div class="progress-bar-wrap">
+      <div id="bar-fill" class="progress-indeterminate"></div>
+    </div>
+  </div>
+
+  <script>
+    if (window.electronAPI && window.electronAPI.onUpdaterStatus) {
+      window.electronAPI.onUpdaterStatus((data) => {
+        const label = document.getElementById('status-label');
+        const fill = document.getElementById('bar-fill');
+        if (data.status) label.textContent = data.status;
+        if (typeof data.percent === 'number') {
+          fill.className = 'progress-bar-fill';
+          fill.style.width = Math.min(100, Math.max(0, data.percent)) + '%';
+        }
+      });
+    }
+  </script>
+</body>
+</html>

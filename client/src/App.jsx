@@ -696,7 +696,7 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
         )}
       </section>
       <section className="settings-card">
-        <div className="settings-card-title"><span className="settings-icon mint"><Download size={18} /></span><div><h2>Desktop-App für Windows</h2><p>Mingle wie Discord direkt auf deinem PC installieren.</p></div></div>
+        <div className="settings-card-title"><span className="settings-icon mint"><Download size={18} /></span><div><h2>Desktop-App für Windows</h2><p>Mingle als eigenständige App direkt auf deinem PC installieren.</p></div></div>
         <div className="settings-form">
           <p style={{ fontSize: '0.92rem', color: 'var(--text-muted)', marginBottom: 12 }}>Profitiere von direkten Desktop-Benachrichtigungen, Taskleisten-Integration und schnellem Start.</p>
           <a href="/download" className="button button-dark" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none', width: 'fit-content' }}>

@@ -587,7 +587,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(97, 120, 237
   position: relative;
   max-width: 1040px;
   margin: 0 auto;
-  padding: 80px 24px 60px;
+  padding: 16px 20px 40px;
   text-align: center;
   display: flex;
   flex-direction: column;

@@ -7,4 +7,4 @@ desktop/runtime-bundle/
 release/
 npm-debug.log*
 cloudflare/.dev.vars
-cloudflare/.wrangler/
+build/

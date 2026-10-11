@@ -18,9 +18,9 @@ import {
 
 export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) {
   const [releaseInfo, setReleaseInfo] = useState({
-    version: '1.0.0',
-    fileName: 'Mingle-Setup-1.0.0.exe',
-    fileSizeMb: 112,
+    version: '1.0.2',
+    fileName: 'Mingle-Setup-1.0.2.exe',
+    fileSizeMb: 107,
     ready: true
   });
 
@@ -58,9 +58,9 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
             <button className="button-nav-login" onClick={onOpenLogin}>
               Anmelden
             </button>
-            <button className="button-nav-app" onClick={onOpenApp}>
-              Web-App öffnen
-            </button>
+            <a href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Windows-1.0.2.zip" className="button-nav-app" download>
+              Download (.zip)
+            </a>
           </div>
         </div>
       </nav>
@@ -70,7 +70,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
         <div className="hero-glow-sphere" />
         <div className="hero-badge">
           <Sparkles size={15} />
-          <span>Mingle v{releaseInfo.version} • Discord-Feeling mit Auto-Updates</span>
+          <span>Mingle v{releaseInfo.version} • Community Messenger mit Auto-Updates</span>
         </div>
 
         <h1 className="hero-heading">
@@ -80,22 +80,22 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
         <p className="hero-subtext">
           Erstelle eigene Server mit Textkanälen, verteile Rollen von Owner bis Moderator,
           schütze dein Profil mit 2FA und chatte in Echtzeit.
-          Ganz normal installierbar – mit automatischen Updates im Hintergrund wie bei Discord.
+          Ganz normal installierbar – mit automatischen Updates direkt beim Start.
         </p>
 
         <div className="hero-actions">
-          <a href="/download" className="btn-hero-primary" download>
+          <a href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Windows-1.0.2.zip" className="btn-hero-primary" download>
             <Download size={20} />
             <div className="btn-text-block">
-              <span className="btn-main-label">Für Windows herunterladen</span>
-              <span className="btn-sub-label">Version {releaseInfo.version} • 64-bit Installer</span>
+              <span className="btn-main-label">Download (.zip)</span>
+              <span className="btn-sub-label">Empfohlen • Ohne Warnung</span>
             </div>
           </a>
 
-          <button className="btn-hero-secondary" onClick={onOpenApp}>
-            <span>Mingle im Browser öffnen</span>
-            <ArrowRight size={18} />
-          </button>
+          <a href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Setup-1.0.2.exe" className="btn-hero-secondary" download>
+            <Download size={18} />
+            <span>Direkt-Installer (.exe)</span>
+          </a>
         </div>
 
         <div className="hero-highlights">
@@ -113,39 +113,57 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
           </div>
         </div>
 
-        {/* ── App Mockup Preview ───────────────────────────────────────────────── */}
-        <div className="hero-preview-window">
-          <div className="window-header">
-            <div className="window-dots">
+        {/* ── App Mockup Preview ──────────────────────────────────────────────── */}
+        <div className="mockup-preview-window">
+          <div className="mockup-window-header">
+            <div className="mockup-window-dots">
               <span className="dot red" />
               <span className="dot yellow" />
               <span className="dot green" />
             </div>
-            <div className="window-title">Mingle — #allgemein (Offizieller Community Server)</div>
-          </div>
-          <div className="window-content-mockup">
-            <div className="mockup-sidebar-servers">
-              <span className="mockup-server-icon active">M</span>
-              <span className="mockup-server-icon">🎮</span>
-              <span className="mockup-server-icon">💬</span>
-              <span className="mockup-server-icon plus">+</span>
+            <div className="mockup-window-title">
+              Mingle — #allgemein (Offizieller Community Server)
             </div>
-            <div className="mockup-sidebar-channels">
-              <div className="mockup-server-header">
+          </div>
+
+          <div className="mockup-window-body">
+            {/* Server Sidebar */}
+            <div className="mockup-servers-bar">
+              <div className="mockup-server-icon active">M</div>
+              <div className="mockup-server-icon">🎮</div>
+              <div className="mockup-server-icon">💬</div>
+              <div className="mockup-server-icon plus">+</div>
+            </div>
+
+            {/* Channels Sidebar */}
+            <div className="mockup-channels-bar">
+              <div className="mockup-server-name">
                 <b>Community Server</b>
                 <Crown size={14} className="crown-icon" />
               </div>
-              <div className="mockup-channel-item active"><Hash size={14} /> allgemein</div>
-              <div className="mockup-channel-item"><Hash size={14} /> ankündigungen</div>
-              <div className="mockup-channel-item"><Hash size={14} /> gaming</div>
-              <div className="mockup-channel-item"><Hash size={14} /> hilfe-support</div>
+
+              <div className="mockup-channel-item active">
+                <Hash size={14} /> allgemein
+              </div>
+              <div className="mockup-channel-item">
+                <Hash size={14} /> ankündigungen
+              </div>
+              <div className="mockup-channel-item">
+                <Hash size={14} /> gaming
+              </div>
+              <div className="mockup-channel-item">
+                <Hash size={14} /> hilfe-support
+              </div>
             </div>
+
+            {/* Chat Area */}
             <div className="mockup-chat-area">
               <div className="mockup-chat-header">
                 <Hash size={16} /> <b>allgemein</b> — Willkommen im offiziellen Community Server!
               </div>
-              <div className="mockup-messages">
-                <div className="mockup-msg">
+
+              <div className="mockup-messages-list">
+                <div className="mockup-message">
                   <span className="mockup-msg-avatar owner">O</span>
                   <div>
                     <div className="mockup-msg-author">
@@ -156,7 +174,8 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
                     <p className="author-body">Willkommen bei Mingle! Der Server läuft stabil in der Cloud und die Auto-Updates sind scharf geschaltet. 🚀</p>
                   </div>
                 </div>
-                <div className="mockup-msg">
+
+                <div className="mockup-message">
                   <span className="mockup-msg-avatar admin">A</span>
                   <div>
                     <div className="mockup-msg-author">
@@ -164,7 +183,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
                       <span className="role-tag admin-tag">ADMIN</span>
                       <small>Heute um 14:12</small>
                     </div>
-                    <p className="author-body">2-Faktor-Authentifizierung aktiviert und Rollen sind verteilt. Alles läuft flüssig wie bei Discord!</p>
+                    <p className="author-body">2-Faktor-Authentifizierung aktiviert und Rollen sind verteilt. Alles läuft flüssig und stabil!</p>
                   </div>
                 </div>
               </div>
@@ -176,9 +195,9 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
       {/* ── Features Section ──────────────────────────────────────────────────── */}
       <section id="features" className="landing-section">
         <div className="section-header">
-          <span className="section-kicker">DISCORD-FEELING PUR</span>
+          <span className="section-kicker">COMMUNITY MESSENGER</span>
           <h2>Alles, was du für deine Community brauchst</h2>
-          <p>Von flexiblen Rollen bis hin zu verschlüsselten privaten Chats.</p>
+          <p>Von flexiblen Rollen bis hin zu verschlüsselten privaten Chats und Videoanrufen.</p>
         </div>
 
         <div className="features-grid">
@@ -188,7 +207,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
             </div>
             <h3>Rollen &amp; Rechte-System</h3>
             <p>
-              Strikte Hierarchien wie in Discord: <b>Owner</b>, <b>Admin</b>, <b>Moderator</b>, <b>Staff</b> und <b>Member</b>.
+              Strikte Hierarchien für deine Community: <b>Owner</b>, <b>Admin</b>, <b>Moderator</b>, <b>Staff</b> und <b>Member</b>.
               Der Owner hat volle Kontrolle über Banns, Kicks und Rollenverteilung.
             </p>
           </div>
@@ -262,16 +281,17 @@ export default function LandingPage({ onOpenApp, onOpenLogin, onOpenRegister }) 
               Mingle hält sich von selbst auf dem allerneuesten Stand.
             </p>
             <div className="download-actions">
-              <a href="/download" className="btn-hero-primary" download>
+              <a href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Windows-1.0.2.zip" className="btn-hero-primary" download>
                 <Download size={22} />
                 <div className="btn-text-block">
-                  <span className="btn-main-label">Installer herunterladen</span>
-                  <span className="btn-sub-label">{releaseInfo.fileName} • {releaseInfo.fileSizeMb} MB</span>
+                  <span className="btn-main-label">Download als .ZIP (Empfohlen)</span>
+                  <span className="btn-sub-label">Ohne Browser-Sicherheitswarnung</span>
                 </div>
               </a>
-              <button className="btn-box-browser" onClick={onOpenApp}>
-                Im Browser nutzen
-              </button>
+              <a href="https://github.com/timrex011/mingle-messenger/releases/download/v1.0.2/Mingle-Setup-1.0.2.exe" className="btn-hero-secondary" download>
+                <Download size={18} />
+                <span>Direkt als .EXE laden</span>
+              </a>
             </div>
           </div>
         </div>
