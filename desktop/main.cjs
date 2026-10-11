@@ -282,22 +282,9 @@ function setupAutoUpdater() {
     });
 
     autoUpdater.on('update-downloaded', (info) => {
-      console.info('[Update] Update heruntergeladen:', info.version);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          title: 'Mingle – Update bereit',
-          message: `Mingle wurde auf Version ${info.version} aktualisiert!`,
-          detail: 'Möchtest du Mingle jetzt neu starten, um die neueste Version wie bei Discord direkt anzuwenden?',
-          buttons: ['Jetzt neu starten', 'Später beim Beenden'],
-          defaultId: 0,
-          cancelId: 1
-        }).then((choice) => {
-          if (choice.response === 0) {
-            autoUpdater.quitAndInstall();
-          }
-        });
-      }
+      console.info('[Update] Update heruntergeladen:', info.version, '– wird sofort automatisch installiert...');
+      // Sofort automatisch installieren und neu starten (silent, ohne Nutzerbestätigung)
+      autoUpdater.quitAndInstall(true, true);
     });
 
     autoUpdater.on('error', (err) => {
