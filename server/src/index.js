@@ -3,6 +3,8 @@ const http = require('node:http');
 const app = require('./app');
 const config = require('./config');
 const mailer = require('./mailer');
+const db = require('./db');
+const tursoSync = require('./turso-sync');
 const { initRealtime } = require('./realtime');
 
 const server = http.createServer(app);
@@ -16,6 +18,8 @@ function publicUrl(addressInfo) {
 }
 
 async function start() {
+  tursoSync.startSync(db);
+
   if (mailer.isConfigured) {
     try {
       await mailer.verifyTransport();
