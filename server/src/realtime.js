@@ -149,6 +149,72 @@ function initRealtime(server) {
       });
     });
 
+    // ── WebRTC Signaling: Audio / Video / Bildschirmübertragung ──
+    socket.on('call:initiate', (payload = {}) => {
+      const { conversationId, targetUserId, withVideo, isScreenShare } = payload;
+      if (!conversationId || !targetUserId) return;
+      if (isBlocked(userId, targetUserId)) return;
+
+      const caller = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+      if (!caller) return;
+
+      io.to(`user:${targetUserId}`).emit('call:incoming', {
+        conversationId,
+        fromUserId: userId,
+        fromUsername: caller.username,
+        withVideo: Boolean(withVideo),
+        isScreenShare: Boolean(isScreenShare)
+      });
+    });
+
+    socket.on('call:accept', (payload = {}) => {
+      const { conversationId, targetUserId } = payload;
+      if (!conversationId || !targetUserId) return;
+
+      io.to(`user:${targetUserId}`).emit('call:accepted', {
+        conversationId,
+        fromUserId: userId
+      });
+    });
+
+    socket.on('call:reject', (payload = {}) => {
+      const { conversationId, targetUserId, reason } = payload;
+      if (!conversationId || !targetUserId) return;
+
+      io.to(`user:${targetUserId}`).emit('call:rejected', {
+        conversationId,
+        fromUserId: userId,
+        reason: reason || 'declined'
+      });
+    });
+
+    socket.on('call:signal', (payload = {}) => {
+      const { targetUserId, signalData, conversationId } = payload;
+      if (!targetUserId || !signalData) return;
+
+      io.to(`user:${targetUserId}`).emit('call:signal', {
+        fromUserId: userId,
+        conversationId,
+        signalData
+      });
+    });
+
+    socket.on('call:end', (payload = {}) => {
+      const { targetUserId, conversationId } = payload;
+      if (targetUserId) {
+        io.to(`user:${targetUserId}`).emit('call:ended', {
+          fromUserId: userId,
+          conversationId
+        });
+      }
+      if (conversationId) {
+        socket.to(`conversation:${conversationId}`).emit('call:ended', {
+          fromUserId: userId,
+          conversationId
+        });
+      }
+    });
+
     socket.on('disconnect', () => {
       clearTimeout(expiryTimer);
       const currentSockets = connectedUsers.get(userId);

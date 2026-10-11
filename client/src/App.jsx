@@ -14,9 +14,15 @@ import {
   LogOut,
   Menu,
   MessageCircle,
+  Mic,
+  MicOff,
+  Monitor,
+  MonitorOff,
   Moon,
   MoreHorizontal,
   Paperclip,
+  Phone,
+  PhoneOff,
   Search,
   Send,
   Settings,
@@ -28,6 +34,8 @@ import {
   UserPlus,
   UserX,
   UsersRound,
+  Video,
+  VideoOff,
   X
 } from 'lucide-react';
 import { request, requestBlob } from './api';
@@ -789,6 +797,22 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+
+  // ── WebRTC State ──
+  const [callActive, setCallActive] = useState(false);
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [callType, setCallType] = useState('audio'); // 'audio', 'video', 'screen'
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoMuted, setIsVideoMuted] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [callPeerUser, setCallPeerUser] = useState(null);
+
+  const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+
   const socketRef = useRef(null);
   const chatSearchRef = useRef(null);
   const selectedIdRef = useRef(null);
@@ -950,12 +974,263 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       if (event.conversationId !== selectedIdRef.current || event.userId === user.id) return;
       setTyping(event.active ? event.username : null);
     });
+
+    // ── WebRTC Inbound Events ──
+    socket.on('call:incoming', ({ conversationId, fromUserId, fromUsername, withVideo, isScreenShare }) => {
+      setIncomingCall({
+        conversationId,
+        fromUserId,
+        fromUsername,
+        withVideo,
+        isScreenShare
+      });
+    });
+
+    socket.on('call:accepted', async () => {
+      if (!peerConnectionRef.current) return;
+      try {
+        const offer = await peerConnectionRef.current.createOffer();
+        await peerConnectionRef.current.setLocalDescription(offer);
+        socketRef.current?.emit('call:signal', {
+          targetUserId: callPeerUser?.id,
+          conversationId: selectedIdRef.current,
+          signalData: { sdp: peerConnectionRef.current.localDescription }
+        });
+      } catch (err) {
+        console.error('Fehler beim Erstellen des WebRTC-Angebots:', err);
+      }
+    });
+
+    socket.on('call:rejected', ({ reason }) => {
+      cleanupCall();
+      setInfo(reason === 'busy' ? 'Teilnehmer ist bereits in einem Gespräch.' : 'Anruf wurde abgelehnt.');
+    });
+
+    socket.on('call:signal', async ({ signalData, fromUserId }) => {
+      if (!peerConnectionRef.current) return;
+      try {
+        if (signalData.sdp) {
+          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+          if (signalData.sdp.type === 'offer') {
+            const answer = await peerConnectionRef.current.createAnswer();
+            await peerConnectionRef.current.setLocalDescription(answer);
+            socketRef.current?.emit('call:signal', {
+              targetUserId: fromUserId,
+              conversationId: selectedIdRef.current,
+              signalData: { sdp: peerConnectionRef.current.localDescription }
+            });
+          }
+        } else if (signalData.candidate) {
+          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+        }
+      } catch (err) {
+        console.error('Fehler bei WebRTC-Signaling-Verarbeitung:', err);
+      }
+    });
+
+    socket.on('call:ended', () => {
+      cleanupCall();
+      setInfo('Gespräch wurde beendet.');
+    });
+
     return () => {
       window.clearTimeout(typingTimer.current);
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [token, user.id, onToken, refreshLists]);
+  }, [token, user.id, onToken, refreshLists, callPeerUser]);
+
+  // ── WebRTC Actions: Audio, Video & Bildschirmübertragung ──
+  function cleanupCall() {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    remoteStreamRef.current = null;
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    setCallActive(false);
+    setIncomingCall(null);
+    setCallPeerUser(null);
+    setIsMuted(false);
+    setIsVideoMuted(false);
+    setIsScreenSharing(false);
+  }
+
+  function createPeerConnection(targetUserId) {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socketRef.current?.emit('call:signal', {
+          targetUserId,
+          conversationId: selectedIdRef.current,
+          signalData: { candidate: event.candidate }
+        });
+      }
+    };
+
+    pc.ontrack = (event) => {
+      remoteStreamRef.current = event.streams[0];
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
+    };
+
+    peerConnectionRef.current = pc;
+    return pc;
+  }
+
+  async function startCall(type = 'audio') {
+    if (!selected?.peer) return;
+    setCallType(type);
+    setCallPeerUser(selected.peer);
+    setCallActive(true);
+
+    try {
+      let stream;
+      if (type === 'screen') {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        setIsScreenSharing(true);
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: type === 'video'
+        });
+      }
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      const pc = createPeerConnection(selected.peer.id);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      socketRef.current?.emit('call:initiate', {
+        conversationId: selected.id,
+        targetUserId: selected.peer.id,
+        withVideo: type === 'video',
+        isScreenShare: type === 'screen'
+      });
+    } catch (err) {
+      console.error('Konnte Medien nicht öffnen:', err);
+      setError('Mikrofon-/Kamerazugriff wurde verweigert oder abgebrochen.');
+      cleanupCall();
+    }
+  }
+
+  async function acceptCall() {
+    if (!incomingCall) return;
+    const { fromUserId, conversationId, withVideo, isScreenShare } = incomingCall;
+    const type = isScreenShare ? 'screen' : withVideo ? 'video' : 'audio';
+    setCallType(type);
+    setCallPeerUser({ id: fromUserId, username: incomingCall.fromUsername });
+    setCallActive(true);
+    setIncomingCall(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: withVideo
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      const pc = createPeerConnection(fromUserId);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      socketRef.current?.emit('call:accept', {
+        conversationId,
+        targetUserId: fromUserId
+      });
+    } catch (err) {
+      console.error('Konnte Anruf nicht annehmen:', err);
+      setError('Zugriff auf Audio/Video fehlgeschlagen.');
+      rejectCall();
+    }
+  }
+
+  function rejectCall() {
+    if (!incomingCall) return;
+    socketRef.current?.emit('call:reject', {
+      conversationId: incomingCall.conversationId,
+      targetUserId: incomingCall.fromUserId
+    });
+    setIncomingCall(null);
+  }
+
+  function endCall() {
+    if (callPeerUser) {
+      socketRef.current?.emit('call:end', {
+        targetUserId: callPeerUser.id,
+        conversationId: selectedIdRef.current
+      });
+    }
+    cleanupCall();
+  }
+
+  function toggleMute() {
+    if (!localStreamRef.current) return;
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !audioTrack.enabled;
+      setIsMuted(!audioTrack.enabled);
+    }
+  }
+
+  function toggleVideo() {
+    if (!localStreamRef.current) return;
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = !videoTrack.enabled;
+      setIsVideoMuted(!videoTrack.enabled);
+    }
+  }
+
+  async function toggleScreenShare() {
+    if (!peerConnectionRef.current) return;
+    if (isScreenSharing) {
+      // Zurück zur Webcam
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const videoTrack = stream.getVideoTracks()[0];
+        const sender = peerConnectionRef.current.getSenders().find((s) => s.track?.kind === 'video');
+        if (sender) sender.replaceTrack(videoTrack);
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+        localStreamRef.current = stream;
+        setIsScreenSharing(false);
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      // Bildschirm freigeben
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        const sender = peerConnectionRef.current.getSenders().find((s) => s.track?.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(screenTrack);
+        } else {
+          peerConnectionRef.current.addTrack(screenTrack, screenStream);
+        }
+        if (localVideoRef.current) localVideoRef.current.srcObject = screenStream;
+        setIsScreenSharing(true);
+        screenTrack.onended = () => {
+          setIsScreenSharing(false);
+        };
+      } catch (err) {
+        console.error('Bildschirmübertragung abgebrochen:', err);
+      }
+    }
+  }
+
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -1448,9 +1723,61 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
             <div className="chat-room-header">
               <Avatar name={selected.name || 'Gruppe'} online={selected.peer?.online} />
               <div><h2>{selected.name}</h2><p>{typing ? `${typing} schreibt gerade…` : selected.peer?.online ? 'online' : selected.type === 'group' ? 'Gruppenunterhaltung' : 'zuletzt gesehen'}</p></div>
+              {selected.peer && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                  <button className="call-action-btn" title="Sprachanruf starten" aria-label="Sprachanruf starten" onClick={() => startCall('audio')} disabled={callActive}>
+                    <Phone size={17} />
+                  </button>
+                  <button className="call-action-btn" title="Videoanruf starten" aria-label="Videoanruf starten" onClick={() => startCall('video')} disabled={callActive}>
+                    <Video size={17} />
+                  </button>
+                  <button className="call-action-btn" title="Bildschirm übertragen" aria-label="Bildschirm übertragen" onClick={() => startCall('screen')} disabled={callActive}>
+                    <Monitor size={17} />
+                  </button>
+                </div>
+              )}
               {selected.type === 'group' && <button className="icon-button group-details-button" title="Gruppen verwalten" aria-label="Gruppen verwalten" onClick={openGroupDetails}><UsersRound size={17} /></button>}
               {selected.peer && <button className="icon-button block-button mobile-block-button" title="Kontakt blockieren" aria-label="Kontakt blockieren" onClick={() => blockUser(selected.peer)}><Ban size={17} /></button>}
             </div>
+            {/* ── Active WebRTC Call Overlay ── */}
+            {callActive && (
+              <div className="active-call-overlay">
+                <div className={`call-video-grid ${callType !== 'audio' ? 'with-remote' : ''}`}>
+                  {callType !== 'audio' ? (
+                    <div className="remote-video-container">
+                      <video ref={remoteVideoRef} autoPlay playsInline />
+                      <div className="local-video-pip">
+                        <video ref={localVideoRef} autoPlay playsInline muted />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="call-audio-only-placeholder">
+                      <div className="call-audio-pulse">
+                        <Phone size={44} color="#818cf8" />
+                      </div>
+                      <h3>Sprachanruf mit @{callPeerUser?.username || 'Kontakt'}</h3>
+                      <p>Verbunden über sicheres WebRTC</p>
+                      {/* Unsichtbare Audio-Wiedergabe */}
+                      <video ref={remoteVideoRef} autoPlay playsInline style={{ display: 'none' }} />
+                    </div>
+                  )}
+                </div>
+                <div className="call-control-bar">
+                  <button className={`btn-call-ctrl ${isMuted ? 'active-muted' : ''}`} title={isMuted ? 'Mikrofon aktivieren' : 'Stummschalten'} onClick={toggleMute}>
+                    {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                  </button>
+                  <button className={`btn-call-ctrl ${isVideoMuted ? 'active-muted' : ''}`} title={isVideoMuted ? 'Kamera aktivieren' : 'Kamera deaktivieren'} onClick={toggleVideo}>
+                    {isVideoMuted ? <VideoOff size={20} /> : <Video size={20} />}
+                  </button>
+                  <button className={`btn-call-ctrl ${isScreenSharing ? 'active-screen' : ''}`} title={isScreenSharing ? 'Bildschirmübertragung stoppen' : 'Bildschirm übertragen'} onClick={toggleScreenShare}>
+                    {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} />}
+                  </button>
+                  <button className="btn-call-hangup" title="Auflegen" onClick={endCall}>
+                    <PhoneOff size={22} />
+                  </button>
+                </div>
+              </div>
+            )}
             {error && <div className="chat-error" role="alert">{error}<button onClick={() => setError('')} aria-label="Fehler schließen"><X size={14} /></button></div>}
             {groupDetailsOpen && selected.type === 'group' && <aside className="group-details-panel">
               <div className="group-details-heading"><div><span className="auth-kicker">GRUPPE</span><h3>Mitglieder & Verwaltung</h3></div><button className="icon-button" aria-label="Gruppendetails schließen" onClick={() => setGroupDetailsOpen(false)}><X size={17} /></button></div>
@@ -1530,6 +1857,24 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
           </div>
         )}
         {(info || (error && !selected)) && <div className={`workspace-toast ${error ? 'toast-error' : ''}`} role={error ? 'alert' : 'status'}>{error || info}<button aria-label="Hinweis schließen" onClick={() => { setInfo(''); setError(''); }}><X size={15} /></button></div>}
+        {/* ── Incoming Call Ringing Popup (Discord-Style) ── */}
+        {incomingCall && (
+          <div className="incoming-call-modal">
+            <Avatar name={incomingCall.fromUsername || '?'} size="large" />
+            <div className="incoming-call-info">
+              <h4>@{incomingCall.fromUsername} ruft an…</h4>
+              <p>{incomingCall.isScreenShare ? 'Teilt Bildschirm' : incomingCall.withVideo ? 'Videoanruf' : 'Sprachanruf'}</p>
+            </div>
+            <div className="incoming-call-actions">
+              <button className="btn-call-accept" title="Annehmen" aria-label="Annehmen" onClick={acceptCall}>
+                <Phone size={20} />
+              </button>
+              <button className="btn-call-reject" title="Ablehnen" aria-label="Ablehnen" onClick={rejectCall}>
+                <PhoneOff size={20} />
+              </button>
+            </div>
+          </div>
+        )}
         <footer className="main-footer"><span>mingle <span>·</span> In Verbindung, ganz bei dir.</span><button onClick={onThemeToggle}>{theme === 'light' ? <Moon size={13} /> : <Sun size={13} />} Design wechseln</button></footer>
       </section>
     </main>
