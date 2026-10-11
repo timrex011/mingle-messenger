@@ -311,6 +311,11 @@ function runStartupSequence() {
   });
 
   autoUpdater.on('update-available', (info) => {
+    if (info.version === app.getVersion()) {
+      sendSplashStatus('App ist aktuell ✓');
+      setTimeout(proceedToLaunch, 300);
+      return;
+    }
     isUpdating = true;
     sendSplashStatus(`Update v${info.version} gefunden...`, 5);
   });
