@@ -8,36 +8,15 @@ const accessSecret = process.env.JWT_ACCESS_SECRET || crypto.randomBytes(32).toS
 const refreshSecret = process.env.JWT_REFRESH_SECRET || crypto.randomBytes(32).toString('hex');
 const refreshTokenTtl = process.env.REFRESH_TOKEN_TTL || '7d';
 const refreshTtlMatch = refreshTokenTtl.match(/^(\d+)(s|m|h|d)$/);
-const smtpHost = process.env.SMTP_HOST || '';
-const smtpPort = Number.parseInt(process.env.SMTP_PORT || '587', 10);
-const smtpUser = process.env.SMTP_USER || '';
-const smtpPassword = process.env.SMTP_PASSWORD || '';
-const smtpSecureValue = process.env.SMTP_SECURE || 'false';
 const parsedPort = Number.parseInt(process.env.PORT || '3000', 10);
 const databasePath = path.resolve(process.env.DATABASE_PATH || path.resolve(process.cwd(), './data/messenger.sqlite'));
 
 if (!refreshTtlMatch || Number(refreshTtlMatch[1]) < 1) {
   throw new Error('REFRESH_TOKEN_TTL must be a positive duration such as 30m or 7d.');
 }
-if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
-  throw new Error('SMTP_PORT must be a valid TCP port between 1 and 65535.');
-}
 if (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535) {
   throw new Error('PORT must be a valid TCP port between 0 and 65535.');
 }
-if (!['true', 'false'].includes(smtpSecureValue)) {
-  throw new Error('SMTP_SECURE must be either true or false.');
-}
-if (Boolean(smtpUser) !== Boolean(smtpPassword)) {
-  throw new Error('Set both SMTP_USER and SMTP_PASSWORD, or leave both empty for an unauthenticated SMTP relay.');
-}
-
-// Secrets and SMTP are handled gracefully with secure fallbacks
-
-// SMTP is optional in production - if not available, accounts are verified automatically
-
-
-const isRender = Boolean(process.env.RENDER);
 
 module.exports = {
   port: parsedPort,
@@ -51,19 +30,17 @@ module.exports = {
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '15m',
   refreshTokenTtl,
   refreshTokenTtlMs: Number(refreshTtlMatch[1]) * { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[refreshTtlMatch[2]],
-  resendApiKey: process.env.RESEND_API_KEY || '',
-  emailFrom: process.env.EMAIL_FROM || process.env.RESEND_FROM || 'Mingle <onboarding@resend.dev>',
-  smtpHost,
-  smtpPort,
-  smtpSecure: smtpSecureValue === 'true',
-  smtpUser,
-  smtpPassword,
-  smtpTestTo: process.env.SMTP_TEST_TO || smtpUser,
-  smtpFrom: process.env.SMTP_FROM || 'Messenger <no-reply@example.com>',
+  emailJsUserId: process.env.EMAILJS_USER_ID || '',
+  emailJsPrivateKey: process.env.EMAILJS_PRIVATE_KEY || '',
+  emailJsServiceId: process.env.EMAILJS_SERVICE_ID || '',
+  emailJsTemplates: {
+    passwordReset: process.env.EMAILJS_TEMPLATE_PASSWORD_RESET || '',
+    emailVerification: process.env.EMAILJS_TEMPLATE_EMAIL_VERIFY || '',
+    securityCode: process.env.EMAILJS_TEMPLATE_SECURITY_CODE || ''
+  },
   bcryptRounds: Math.min(Math.max(Number.parseInt(process.env.BCRYPT_ROUNDS || '12', 10), 10), 15),
   serveClient: isProduction || isDesktop || process.env.SERVE_CLIENT === 'true' || require('node:fs').existsSync(path.join(__dirname, '../../client/dist/index.html')),
   useSecureCookies,
-  autoVerifyEmail: isDesktop || isRender || process.env.AUTO_VERIFY_EMAIL === 'true',
   ownerEmail: (process.env.OWNER_EMAIL || 'riftduels4@gmail.com').trim().toLowerCase(),
   tursoDatabaseUrl: process.env.TURSO_DATABASE_URL || '',
   tursoAuthToken: process.env.TURSO_AUTH_TOKEN || '',

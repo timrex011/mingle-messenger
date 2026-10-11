@@ -1,225 +1,151 @@
 const config = require('./config');
 
-let resendClient = null;
-if (config.resendApiKey) {
-  try {
-    const { Resend } = require('resend');
-    resendClient = new Resend(config.resendApiKey);
-  } catch (err) {
-    console.warn('Resend client initialization error:', err.message);
+const TEMPLATE_KEYS = {
+  passwordReset: 'passwordReset',
+  emailVerification: 'emailVerification',
+  securityCode: 'securityCode'
+};
+
+let lastEmailJsRequest = 0;
+
+function getTemplateId(template) {
+  const key = TEMPLATE_KEYS[template];
+  if (!key) {
+    throw new Error(`Unbekannter EmailJS-Vorlagentyp: ${template}`);
+  }
+  const templateId = config.emailJsTemplates[key] || (process.env.NODE_ENV === 'test' ? `test-${key}` : '');
+  if (!templateId) {
+    throw new Error(`EmailJS-Vorlage fehlt: EMAILJS_TEMPLATE_${key.replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase()}`);
+  }
+  return templateId;
+}
+
+function assertConfigured() {
+  if (!config.emailJsUserId || !config.emailJsPrivateKey || !config.emailJsServiceId) {
+    throw new Error('EmailJS ist unvollständig konfiguriert. Prüfe EMAILJS_USER_ID, EMAILJS_PRIVATE_KEY und EMAILJS_SERVICE_ID.');
   }
 }
 
-let transporter = null;
-if (config.smtpHost) {
-  try {
-    const nodemailer = require('nodemailer');
-    transporter = nodemailer.createTransport({
-      host: config.smtpHost,
-      port: config.smtpPort,
-      secure: config.smtpSecure,
-      requireTLS: Boolean(config.smtpUser),
-      auth: config.smtpUser ? { user: config.smtpUser, pass: config.smtpPassword } : undefined,
-      connectionTimeout: 4_000,
-      greetingTimeout: 4_000,
-      socketTimeout: 8_000
-    });
-  } catch (err) {
-    console.warn('Nodemailer initialization error:', err.message);
+async function waitForRateLimit() {
+  const delay = Math.max(0, 1100 - (Date.now() - lastEmailJsRequest));
+  if (delay) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
-function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[character]);
-}
+async function sendTemplate({ template, email, params }) {
+  const templateId = getTemplateId(template);
 
-async function verifyTransport() {
-  if (resendClient) {
-    return true;
-  }
-  if (!transporter) {
-    throw new Error('Weder RESEND_API_KEY noch SMTP_HOST ist konfiguriert.');
-  }
-  await transporter.verify();
-}
-
-async function sendAccountLink({ email, label, url }) {
-  if (!resendClient && !transporter) {
-    // Fallback: log to console (dev mode or no external email service configured)
-    console.info(`[${label}] ${url}`);
-    if (config.isDesktop) {
-      console.info(`MINGLE_ACCOUNT_LINK ${url}`);
-    }
+  if (process.env.NODE_ENV === 'test') {
+    console.info(`EMAILJS_TEST ${template} ${email} ${JSON.stringify(params)}`);
     return;
   }
 
-  const safeLabel = escapeHtml(label);
-  const safeUrl = escapeHtml(url);
-  const subject = `${label} – mingle`;
-  const text = `${label}\n\nÖffne diesen Link: ${url}\n\nFalls du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.`;
-  const html = `<!doctype html>
-<html lang="de">
-  <body style="margin:0;padding:32px 16px;background:#f4f6fb;font-family:Arial,sans-serif;color:#202638">
-    <table role="presentation" style="width:100%;max-width:560px;margin:0 auto;border:1px solid #e8ebf2;border-radius:16px;background:#fff">
-      <tr><td style="padding:30px">
-        <p style="margin:0 0 24px;color:#667be9;font-size:22px;font-weight:700">mingle.</p>
-        <h1 style="margin:0 0 12px;font-size:22px">${safeLabel}</h1>
-        <p style="margin:0 0 24px;color:#687084;line-height:1.6">Nutze die Schaltfläche, um fortzufahren. Falls du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>
-        <a href="${safeUrl}" style="display:inline-block;padding:13px 20px;border-radius:10px;background:#6379ed;color:#fff;text-decoration:none;font-weight:700">Link öffnen</a>
-        <p style="margin:26px 0 0;color:#9299a9;font-size:12px;line-height:1.6">Falls die Schaltfläche nicht funktioniert, kopiere diesen Link in deinen Browser:<br><a href="${safeUrl}" style="color:#6379ed;word-break:break-all">${safeUrl}</a></p>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
+  assertConfigured();
+  await waitForRateLimit();
+  const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(10_000),
+    body: JSON.stringify({
+      service_id: config.emailJsServiceId,
+      template_id: templateId,
+      user_id: config.emailJsUserId,
+      accessToken: config.emailJsPrivateKey,
+      template_params: {
+        to_email: email,
+        ...params
+      }
+    })
+  });
+  lastEmailJsRequest = Date.now();
 
-  if (resendClient) {
-    const res = await resendClient.emails.send({
-      from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
-      to: email,
-      subject,
-      text,
-      html
-    });
-    if (res.error) {
-      throw new Error(`Resend API Fehler: ${res.error.message || JSON.stringify(res.error)}`);
-    }
-    return res;
-  }
-
-  if (transporter) {
-    await transporter.sendMail({
-      from: config.smtpFrom,
-      to: email,
-      subject,
-      text,
-      html
-    });
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw new Error(`EmailJS Versand fehlgeschlagen (HTTP ${response.status}): ${responseText.slice(0, 300)}`);
   }
 }
 
-async function sendTestEmail() {
-  const recipient = config.smtpTestTo || config.smtpUser || 'test@example.com';
-  const subject = 'mingle – E-Mail-Test';
-  const text = 'Der E-Mail-Versand von mingle ist erfolgreich eingerichtet.';
-  const html = '<p>Der E-Mail-Versand von <strong>mingle</strong> ist erfolgreich eingerichtet.</p>';
+async function verifyTransport() {
+  assertConfigured();
+  for (const template of Object.values(TEMPLATE_KEYS)) {
+    getTemplateId(template);
+  }
+  return true;
+}
 
-  if (resendClient) {
-    const res = await resendClient.emails.send({
-      from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
-      to: recipient,
-      subject,
-      text,
-      html
-    });
-    if (res.error) {
-      throw new Error(`Resend API Fehler: ${res.error.message || JSON.stringify(res.error)}`);
+async function sendPasswordReset({ email, username, url }) {
+  return sendTemplate({
+    template: 'passwordReset',
+    email,
+    params: {
+      to_name: username || 'Nutzer',
+      subject: 'Passwort zurücksetzen – mingle',
+      reset_url: url,
+      expires_in: '1 Stunde'
     }
-    return res;
-  }
+  });
+}
 
-  if (!transporter) {
-    throw new Error('Weder RESEND_API_KEY noch SMTP_HOST ist konfiguriert.');
-  }
+async function sendEmailVerification({ email, username, code }) {
+  return sendTemplate({
+    template: 'emailVerification',
+    email,
+    params: {
+      to_name: username || 'Nutzer',
+      subject: 'E-Mail-Adresse bestätigen – mingle',
+      verification_code: code,
+      expires_in: '10 Minuten'
+    }
+  });
+}
 
-  await transporter.sendMail({
-    from: config.smtpFrom,
-    to: recipient,
-    subject,
-    text,
-    html
+async function sendSecurityCode({ email, username, code, purpose, message, expiresIn = '10 Minuten' }) {
+  return sendTemplate({
+    template: 'securityCode',
+    email,
+    params: {
+      to_name: username || 'Nutzer',
+      subject: `mingle – ${purpose}`,
+      verification_code: code || '',
+      expires_in: code ? `Der Code ist ${expiresIn} gültig.` : '',
+      purpose,
+      message
+    }
   });
 }
 
 async function sendNewDeviceAlert({ email, username, ip, city, deviceName, time }) {
-  if (!resendClient && !transporter) {
-    console.info(`[Sicherheits-Benachrichtigung für ${email}] Neue Anmeldung: IP=${ip}, Stadt=${city}, Gerät=${deviceName}`);
-    return;
+  return sendSecurityCode({
+    email,
+    username,
+    purpose: 'Neue Anmeldung erkannt',
+    message: `Eine Anmeldung auf deinem mingle-Konto wurde erkannt.\nZeit: ${time}\nIP-Adresse: ${ip}\nStandort: ${city}\nGerät: ${deviceName}\nWenn du das nicht warst, ändere bitte dein Passwort.`,
+    code: ''
+  });
+}
+
+async function sendTestEmail({ email }) {
+  if (!email) {
+    throw new Error('Für den EmailJS-Test muss eine Empfängeradresse angegeben werden.');
   }
-
-  const safeUsername = escapeHtml(username || 'Nutzer');
-  const safeIp = escapeHtml(ip || 'Unbekannt');
-  const safeCity = escapeHtml(city || 'Unbekannt');
-  const safeDevice = escapeHtml(deviceName || 'Unbekanntes Gerät');
-  const safeTime = escapeHtml(time || new Date().toLocaleString('de-DE'));
-
-  const subject = 'Sicherheitswarnung: Neue Anmeldung auf deinem mingle-Konto';
-  const text = `Hallo ${username},\n\n` +
-    `Es gab eine neue Anmeldung auf deinem Konto bei mingle von einem neuen Gerät:\n\n` +
-    `• Datum/Uhrzeit: ${time}\n` +
-    `• IP-Adresse: ${ip}\n` +
-    `• Ungefährer Standort: ${city}\n` +
-    `• Gerät: ${deviceName}\n\n` +
-    `Falls du das warst, kannst du diese Nachricht ignorieren.\n` +
-    `Falls du das NICHT warst, ändere bitte sofort dein Passwort in den Einstellungen!`;
-
-  const html = `<!doctype html>
-<html lang="de">
-  <body style="margin:0;padding:32px 16px;background:#f4f6fb;font-family:Arial,sans-serif;color:#202638">
-    <table role="presentation" style="width:100%;max-width:560px;margin:0 auto;border:1px solid #e8ebf2;border-radius:16px;background:#fff">
-      <tr><td style="padding:30px">
-        <p style="margin:0 0 20px;color:#667be9;font-size:22px;font-weight:700">mingle.</p>
-        <h1 style="margin:0 0 12px;font-size:20px;color:#1e293b">Neue Anmeldung erkannt</h1>
-        <p style="margin:0 0 20px;color:#64748b;line-height:1.5">
-          Hallo <strong>${safeUsername}</strong>, wir haben eine neue Anmeldung auf deinem mingle-Konto von einem bisher unbekannten Gerät festgestellt.
-        </p>
-
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin:0 0 24px">
-          <table style="width:100%;font-size:14px;color:#334155;border-collapse:collapse">
-            <tr><td style="padding:6px 0;color:#64748b;width:130px"><strong>Datum & Zeit:</strong></td><td style="padding:6px 0">${safeTime}</td></tr>
-            <tr><td style="padding:6px 0;color:#64748b"><strong>IP-Adresse:</strong></td><td style="padding:6px 0">${safeIp}</td></tr>
-            <tr><td style="padding:6px 0;color:#64748b"><strong>Standort:</strong></td><td style="padding:6px 0">📍 ${safeCity}</td></tr>
-            <tr><td style="padding:6px 0;color:#64748b"><strong>Gerät:</strong></td><td style="padding:6px 0">💻 ${safeDevice}</td></tr>
-          </table>
-        </div>
-
-        <p style="margin:0 0 8px;color:#64748b;font-size:13px;line-height:1.5">
-          <strong>Warst du das selbst?</strong> Dann brauchst du nichts weiter zu tun.
-        </p>
-        <p style="margin:0;color:#ef4444;font-size:13px;line-height:1.5">
-          <strong>Warst du das nicht?</strong> Bitte ändere sofort dein Passwort in den Einstellungen, um dein Konto zu schützen.
-        </p>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
-
-  if (resendClient) {
-    const res = await resendClient.emails.send({
-      from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
-      to: email,
-      subject,
-      text,
-      html
-    });
-    if (res.error) {
-      console.warn('[Resend Alert] Warnung:', res.error.message);
-    }
-    return res;
-  }
-
-  if (transporter) {
-    await transporter.sendMail({
-      from: config.smtpFrom,
-      to: email,
-      subject,
-      text,
-      html
-    });
-  }
+  return sendSecurityCode({
+    email,
+    username: 'Test',
+    purpose: 'E-Mail-Konfigurationstest',
+    message: 'Der E-Mail-Versand von mingle ist erfolgreich eingerichtet.',
+    code: ''
+  });
 }
 
 module.exports = {
   get isConfigured() {
-    return Boolean(resendClient || transporter);
+    return Boolean(config.emailJsUserId && config.emailJsPrivateKey && config.emailJsServiceId);
   },
-  sendAccountLink,
+  sendEmailVerification,
   sendNewDeviceAlert,
+  sendPasswordReset,
+  sendSecurityCode,
   sendTestEmail,
   verifyTransport
 };

@@ -93,26 +93,11 @@ if (config.ownerEmail) {
   try {
     db.prepare(`
       UPDATE users
-      SET role = 'owner', is_banned = 0, email_verified = 1
+      SET role = 'owner', is_banned = 0
       WHERE LOWER(email) = LOWER(?)
     `).run(config.ownerEmail);
   } catch (err) {
     console.warn('[DB] Owner-Aktualisierung:', err.message);
-  }
-}
-
-// Wenn AUTO_VERIFY_EMAIL aktiv ist, alle unverifizierten Accounts freischalten
-// (betrifft Nutzer, die sich vor dieser Änderung registriert haben)
-if (config.autoVerifyEmail) {
-  try {
-    const result = db.prepare(`
-      UPDATE users SET email_verified = 1 WHERE email_verified = 0
-    `).run();
-    if (result.changes > 0) {
-      console.info(`[DB] ${result.changes} ausstehende Konto(s) automatisch freigeschaltet.`);
-    }
-  } catch (err) {
-    console.warn('[DB] Auto-Verifikation:', err.message);
   }
 }
 

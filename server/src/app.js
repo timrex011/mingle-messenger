@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
-const { authenticator } = require('otplib');
+const { generateSecret, generateURI, verify } = require('otplib');
 const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
@@ -10,7 +10,6 @@ const { rateLimit } = require('express-rate-limit');
 const db = require('./db');
 const config = require('./config');
 const mailer = require('./mailer');
-const { sendAccountLink } = require('./mailer');
 const { getIpLocation } = require('./geolocation');
 const realtime = require('./realtime');
 const { createChatRouter } = require('./chat');
@@ -89,6 +88,76 @@ function isValidEmail(value) {
 
 function isValidUsername(value) {
   return typeof value === 'string' && /^[A-Za-z0-9_]{3,20}$/.test(value);
+}
+
+function createEmailCode() {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+async function isValidTotpCode(code, secret) {
+  const result = await verify({ token: code.replace(/\s/g, ''), secret });
+  return result.valid;
+}
+
+async function startEmailChallenge({ user, email = user.email, purpose, message, payload = null }) {
+  const challengeToken = createOpaqueToken();
+  const code = createEmailCode();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  db.prepare('DELETE FROM email_auth_challenges WHERE user_id = ? AND purpose = ?').run(user.id, purpose);
+  db.prepare(`
+    INSERT INTO email_auth_challenges (challenge_hash, user_id, purpose, code_hash, payload, email, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    hashToken(challengeToken),
+    user.id,
+    purpose,
+    hashToken(code),
+    payload === null ? null : JSON.stringify(payload),
+    email,
+    expiresAt
+  );
+  try {
+    if (purpose === 'email_verification') {
+      await mailer.sendEmailVerification({ email, username: user.username, code });
+    } else {
+      await mailer.sendSecurityCode({
+        email,
+        username: user.username,
+        code,
+        purpose,
+        message,
+        expiresIn: '10 Minuten'
+      });
+    }
+  } catch (error) {
+    db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(hashToken(challengeToken));
+    throw error;
+  }
+  return challengeToken;
+}
+
+function verifyEmailChallenge(challengeToken, code, purpose, userId = null) {
+  if (typeof challengeToken !== 'string' || typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+    return null;
+  }
+  const challengeHash = hashToken(challengeToken);
+  const challenge = db.prepare(`
+    SELECT * FROM email_auth_challenges
+    WHERE challenge_hash = ? AND purpose = ? AND expires_at > ? AND attempts < 5
+      AND (? IS NULL OR user_id = ?)
+  `).get(challengeHash, purpose, new Date().toISOString(), userId, userId);
+  if (!challenge) {
+    return null;
+  }
+  if (challenge.code_hash !== hashToken(code)) {
+    db.prepare(`
+      UPDATE email_auth_challenges
+      SET attempts = attempts + 1
+      WHERE challenge_hash = ?
+    `).run(challengeHash);
+    return null;
+  }
+  return challenge;
 }
 
 function publicUser(row) {
@@ -201,28 +270,14 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
 
   const id = crypto.randomUUID();
   const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
-  const rawToken = createOpaqueToken();
-  const tokenHash = hashToken(rawToken);
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   const isOwner = config.ownerEmail && email.toLowerCase() === config.ownerEmail.toLowerCase();
   const initialRole = isOwner ? 'owner' : 'member';
-  const autoVerify = Boolean(config.autoVerifyEmail || isOwner);
-
-  const createUser = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO users (id, email, username, password_hash, age, email_verified, role)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, email, username, passwordHash, age, autoVerify ? 1 : 0, initialRole);
-    if (!autoVerify) {
-      db.prepare(`
-        INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
-        VALUES (?, ?, ?)
-      `).run(tokenHash, id, expiresAt);
-    }
-  });
 
   try {
-    createUser();
+    db.prepare(`
+      INSERT INTO users (id, email, username, password_hash, age, email_verified, role)
+      VALUES (?, ?, ?, ?, ?, 0, ?)
+    `).run(id, email, username, passwordHash, age, initialRole);
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
       res.status(409).json({ error: 'E-Mail-Adresse oder Benutzername ist bereits vergeben.' });
@@ -231,32 +286,22 @@ authRouter.post('/register', authLimiter, asyncRoute(async (req, res) => {
     throw error;
   }
 
-  if (autoVerify) {
-    res.status(201).json({
-      message: 'Konto erstellt! Du kannst dich jetzt direkt anmelden.'
-    });
-    return;
-  }
-
-  const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
   try {
-    await sendAccountLink({
-      email,
-      label: 'E-Mail-Adresse bestätigen',
-      url: verificationUrl
+    await startEmailChallenge({
+      user: { id, email, username },
+      purpose: 'email_verification',
+      message: 'Bestätige deine E-Mail-Adresse, um die Registrierung abzuschließen.'
     });
   } catch (error) {
-    console.error('[E-Mail] Bestätigungslink konnte nicht versendet werden:', error.message);
-    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(id);
-    db.prepare('DELETE FROM email_verification_tokens WHERE token_hash = ?').run(tokenHash);
-    res.status(201).json({
-      message: 'Konto angelegt und automatisch freigeschaltet! Du kannst dich jetzt anmelden.'
-    });
+    console.error('[EmailJS] Bestätigungscode konnte nicht versendet werden:', error.message);
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    res.status(503).json({ error: 'Die Bestätigungs-E-Mail konnte nicht versendet werden. Prüfe die E-Mail-Konfiguration und versuche es erneut.' });
     return;
   }
 
   res.status(201).json({
-    message: 'Konto erstellt! Bitte bestätige zuerst deine E-Mail-Adresse (Link im Postfach), um dich anmelden zu können.'
+    message: 'Konto erstellt! Gib den Bestätigungscode aus deinem Postfach ein.',
+    verificationRequired: true
   });
 }));
 
@@ -266,37 +311,56 @@ authRouter.post('/resend-verification', authLimiter, asyncRoute(async (req, res)
     res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein.' });
     return;
   }
-  const user = db.prepare('SELECT id, email, email_verified FROM users WHERE email = ?').get(email);
+  const user = db.prepare('SELECT id, email, username, email_verified FROM users WHERE email = ?').get(email);
   if (user && !user.email_verified) {
-    if (config.ownerEmail && user.email.toLowerCase() === config.ownerEmail.toLowerCase()) {
-      db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user.id);
-      res.json({ message: 'Owner-Konto wurde freigeschaltet! Du kannst dich jetzt anmelden.' });
-      return;
-    }
-    const rawToken = createOpaqueToken();
-    const tokenHash = hashToken(rawToken);
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    const replaceToken = db.transaction(() => {
-      db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(user.id);
-      db.prepare(`
-        INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
-        VALUES (?, ?, ?)
-      `).run(tokenHash, user.id, expiresAt);
-    });
-    replaceToken();
-    const verificationUrl = `${config.clientOrigin}/verify-email?token=${encodeURIComponent(rawToken)}`;
     try {
-      await sendAccountLink({ email: user.email, label: 'E-Mail-Adresse bestätigen', url: verificationUrl });
+      await startEmailChallenge({
+        user,
+        purpose: 'email_verification',
+        message: 'Bestätige deine E-Mail-Adresse, um die Registrierung abzuschließen.'
+      });
     } catch (error) {
-      db.prepare('DELETE FROM email_verification_tokens WHERE token_hash = ?').run(tokenHash);
-      console.error('[E-Mail] Erneuter Bestätigungslink konnte nicht versendet werden:', error.message);
-      db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user.id);
-      res.json({ message: 'E-Mail-Dienst vorübergehend eingeschränkt: Dein Konto wurde automatisch freigeschaltet! Du kannst dich jetzt anmelden.' });
+      console.error('[EmailJS] Erneuter Bestätigungscode konnte nicht versendet werden:', error.message);
+      res.status(503).json({ error: 'Der Bestätigungscode konnte nicht versendet werden. Bitte versuche es später erneut.' });
       return;
     }
   }
-  res.json({ message: 'Falls ein unbestätigtes Konto zu dieser E-Mail-Adresse existiert, wurde ein Bestätigungslink versendet.' });
+  res.json({ message: 'Falls ein unbestätigtes Konto zu dieser E-Mail-Adresse existiert, wurde ein Bestätigungscode versendet.' });
 }));
+
+authRouter.post('/verify-email', authLimiter, (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  const code = typeof req.body.code === 'string' ? req.body.code.trim() : '';
+  const challenge = db.prepare(`
+    SELECT * FROM email_auth_challenges
+    WHERE user_id = (SELECT id FROM users WHERE email = ? COLLATE NOCASE)
+      AND purpose = 'email_verification'
+      AND expires_at > ?
+      AND attempts < 5
+  `).get(email, new Date().toISOString());
+  if (!challenge || !/^\d{6}$/.test(code) || challenge.code_hash !== hashToken(code)) {
+    if (challenge) {
+      db.prepare('UPDATE email_auth_challenges SET attempts = attempts + 1 WHERE challenge_hash = ?')
+        .run(challenge.challenge_hash);
+    }
+    res.status(400).json({ error: 'Der Bestätigungscode ist ungültig oder abgelaufen.' });
+    return;
+  }
+  const verify = db.transaction(() => {
+    db.prepare(`
+      UPDATE users
+      SET email_verified = 1,
+          role = CASE WHEN LOWER(email) = LOWER(?) THEN 'owner' ELSE role END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(config.ownerEmail, challenge.user_id);
+    db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challenge.challenge_hash);
+    db.prepare('DELETE FROM email_auth_challenges WHERE user_id = ? AND purpose = ?')
+      .run(challenge.user_id, 'email_verification');
+  });
+  verify();
+  res.json({ message: 'E-Mail-Adresse erfolgreich bestätigt. Du kannst dich jetzt anmelden.' });
+});
 
 authRouter.get('/verify-email', (req, res) => {
   const token = typeof req.query.token === 'string' ? req.query.token : '';
@@ -410,64 +474,50 @@ authRouter.post('/login', authLimiter, asyncRoute(async (req, res) => {
     return;
   }
   if (!user.email_verified) {
-    if (config.ownerEmail && (user.email.toLowerCase() === config.ownerEmail.toLowerCase() || user.username.toLowerCase() === config.ownerEmail.toLowerCase())) {
-      db.prepare('UPDATE users SET email_verified = 1, role = "owner" WHERE id = ?').run(user.id);
-      user.email_verified = 1;
-      user.role = 'owner';
-    } else {
-      res.status(403).json({ error: 'Bitte bestätige zuerst deine E-Mail-Adresse über den Link in deinem Postfach.' });
+    res.status(403).json({ error: 'Bitte bestätige zuerst deine E-Mail-Adresse mit dem Code aus deinem Postfach.' });
+    return;
+  }
+
+  let challengeToken;
+  try {
+    challengeToken = await startEmailChallenge({
+      user,
+      purpose: 'login',
+      message: `Jemand versucht, sich bei deinem mingle-Konto anzumelden${user.totp_enabled ? '. Nach diesem Code benötigst du zusätzlich den Code aus deiner Authenticator-App' : ''}.`
+    });
+  } catch (error) {
+    console.error('[EmailJS] Login-Code konnte nicht versendet werden:', error.message);
+    res.status(503).json({ error: 'Der Anmeldecode konnte nicht versendet werden. Bitte versuche es später erneut.' });
+    return;
+  }
+  res.json({
+    emailCodeRequired: true,
+    twoFactorRequired: Boolean(user.totp_enabled),
+    challengeToken
+  });
+}));
+
+authRouter.post('/2fa/verify', authLimiter, asyncRoute(async (req, res) => {
+  const emailCode = typeof req.body.emailCode === 'string' ? req.body.emailCode.trim() : '';
+  const challenge = verifyEmailChallenge(req.body.challengeToken, emailCode, 'login');
+  if (!challenge) {
+    res.status(401).json({ error: 'Der E-Mail-Code ist ungültig oder abgelaufen.' });
+    return;
+  }
+  const user = db.prepare('SELECT * FROM users WHERE id = ? AND email_verified = 1').get(challenge.user_id);
+  if (!user) {
+    db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challenge.challenge_hash);
+    res.status(401).json({ error: 'Konto nicht gefunden oder nicht bestätigt.' });
+    return;
+  }
+  if (user.totp_enabled) {
+    const totpCode = typeof req.body.totpCode === 'string' ? req.body.totpCode.replace(/\s/g, '') : '';
+    if (!(await isValidTotpCode(totpCode, user.totp_secret))) {
+      res.status(401).json({ error: 'Der Authenticator-Code ist ungültig oder abgelaufen.' });
       return;
     }
   }
-
-  // If 2FA is enabled, issue a short-lived temp token instead of a full session
-  if (user.totp_enabled) {
-    const jwt = require('jsonwebtoken');
-    const tempToken = jwt.sign(
-      { sub: user.id, type: 'totp_pending' },
-      config.accessSecret,
-      { expiresIn: '5m' }
-    );
-    res.json({ twoFactorRequired: true, tempToken });
-    return;
-  }
-
-  db.prepare(`
-    UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?
-  `).run(user.id);
-  handleDeviceLogin(user, req);
-  res.json(issueSession(user, res));
-}));
-
-// ── 2FA: verify TOTP code after password login ──────────────────────────────
-authRouter.post('/2fa/verify', authLimiter, asyncRoute(async (req, res) => {
-  const { tempToken, code } = req.body;
-  if (typeof tempToken !== 'string' || typeof code !== 'string') {
-    res.status(400).json({ error: 'Ungültige Anfrage.' });
-    return;
-  }
-  let claims;
-  try {
-    const jwt = require('jsonwebtoken');
-    claims = jwt.verify(tempToken, config.accessSecret);
-  } catch {
-    res.status(401).json({ error: 'Sitzung abgelaufen. Bitte melde dich erneut an.' });
-    return;
-  }
-  if (claims.type !== 'totp_pending') {
-    res.status(401).json({ error: 'Ungültiger Token-Typ.' });
-    return;
-  }
-  const user = db.prepare('SELECT * FROM users WHERE id = ? AND email_verified = 1 AND totp_enabled = 1').get(claims.sub);
-  if (!user) {
-    res.status(401).json({ error: 'Konto nicht gefunden oder 2FA nicht aktiviert.' });
-    return;
-  }
-  const isValid = authenticator.verify({ token: code.replace(/\s/g, ''), secret: user.totp_secret });
-  if (!isValid) {
-    res.status(401).json({ error: 'Der Authentifizierungscode ist ungültig oder abgelaufen.' });
-    return;
-  }
+  db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challenge.challenge_hash);
   db.prepare('UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
   handleDeviceLogin(user, req);
   res.json(issueSession(user, res));
@@ -480,19 +530,30 @@ authRouter.post('/2fa/setup', requireAuth, asyncRoute(async (req, res) => {
     res.status(409).json({ error: '2FA ist bereits aktiviert.' });
     return;
   }
-  const secret = authenticator.generateSecret();
-  const otpauthUrl = authenticator.keyuri(user.username, 'mingle', secret);
+  const secret = generateSecret();
+  const otpauthUrl = generateURI({ issuer: 'mingle', label: user.username, secret });
   const qrDataUrl = await QRCode.toDataURL(otpauthUrl);
-  // Store secret temporarily (not yet enabled)
   db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(secret, user.id);
-  res.json({ secret, qrDataUrl });
+  try {
+    const challengeToken = await startEmailChallenge({
+      user,
+      purpose: 'enable_2fa',
+      message: 'Gib den E-Mail-Code ein, um die Aktivierung der Authenticator-2FA zu bestätigen.'
+    });
+    res.json({ secret, qrDataUrl, challengeToken });
+  } catch (error) {
+    db.prepare('UPDATE users SET totp_secret = NULL WHERE id = ?').run(user.id);
+    console.error('[EmailJS] 2FA-Bestätigungscode konnte nicht versendet werden:', error.message);
+    res.status(503).json({ error: 'Der Sicherheitscode konnte nicht versendet werden. Bitte versuche es später erneut.' });
+  }
 }));
 
 // ── 2FA: enable – verify first code and activate 2FA ────────────────────────
 authRouter.post('/2fa/enable', requireAuth, asyncRoute(async (req, res) => {
-  const { code } = req.body;
-  if (typeof code !== 'string') {
-    res.status(400).json({ error: 'Code erforderlich.' });
+  const code = typeof req.body.code === 'string' ? req.body.code : '';
+  const emailChallenge = verifyEmailChallenge(req.body.challengeToken, req.body.emailCode, 'enable_2fa', req.auth.sub);
+  if (!emailChallenge) {
+    res.status(401).json({ error: 'Der E-Mail-Sicherheitscode ist ungültig oder abgelaufen.' });
     return;
   }
   const user = db.prepare('SELECT id, totp_secret, totp_enabled FROM users WHERE id = ?').get(req.auth.sub);
@@ -504,12 +565,15 @@ authRouter.post('/2fa/enable', requireAuth, asyncRoute(async (req, res) => {
     res.status(400).json({ error: 'Bitte starte zuerst die 2FA-Einrichtung.' });
     return;
   }
-  const isValid = authenticator.verify({ token: code.replace(/\s/g, ''), secret: user.totp_secret });
+  const isValid = await isValidTotpCode(code, user.totp_secret);
   if (!isValid) {
     res.status(401).json({ error: 'Ungültiger Code. Bitte versuche es erneut.' });
     return;
   }
-  db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(user.id);
+  db.transaction(() => {
+    db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(user.id);
+    db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(emailChallenge.challenge_hash);
+  })();
   const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
   res.json({ message: '2FA wurde erfolgreich aktiviert.', user: publicUser(updatedUser) });
 }));
@@ -521,7 +585,7 @@ authRouter.post('/2fa/disable', requireAuth, asyncRoute(async (req, res) => {
     res.status(400).json({ error: 'Passwort erforderlich.' });
     return;
   }
-  const user = db.prepare('SELECT id, password_hash, totp_enabled FROM users WHERE id = ?').get(req.auth.sub);
+  const user = db.prepare('SELECT id, email, username, password_hash, totp_enabled FROM users WHERE id = ?').get(req.auth.sub);
   if (!user.totp_enabled) {
     res.status(400).json({ error: '2FA ist nicht aktiviert.' });
     return;
@@ -531,9 +595,133 @@ authRouter.post('/2fa/disable', requireAuth, asyncRoute(async (req, res) => {
     res.status(401).json({ error: 'Falsches Passwort.' });
     return;
   }
-  db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').run(user.id);
-  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
-  res.json({ message: '2FA wurde deaktiviert.', user: publicUser(updatedUser) });
+  const challengeToken = await startEmailChallenge({
+    user,
+    purpose: 'disable_2fa',
+    message: 'Es wurde angefordert, die Authenticator-2FA für dein Konto zu deaktivieren.'
+  });
+  res.json({
+    message: 'Ein Sicherheitscode wurde per E-Mail gesendet. Bestätige damit die Deaktivierung.',
+    challengeToken
+  });
+}));
+
+authRouter.post('/verify-action', requireAuth, authLimiter, asyncRoute(async (req, res) => {
+  const challengeToken = typeof req.body.challengeToken === 'string' ? req.body.challengeToken : '';
+  const challengeHash = hashToken(challengeToken);
+  const challenge = db.prepare(`
+    SELECT * FROM email_auth_challenges
+    WHERE challenge_hash = ? AND user_id = ? AND expires_at > ? AND attempts < 5
+  `).get(challengeHash, req.auth.sub, new Date().toISOString());
+  if (!challenge || !verifyEmailChallenge(challengeToken, req.body.code, challenge.purpose, req.auth.sub)) {
+    res.status(400).json({ error: 'Der Sicherheitscode ist ungültig oder abgelaufen.' });
+    return;
+  }
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub);
+  const payload = JSON.parse(challenge.payload || '{}');
+
+  if (challenge.purpose === 'change_email_old') {
+    const code = createEmailCode();
+    db.prepare(`
+      UPDATE email_auth_challenges
+      SET purpose = 'change_email_new', code_hash = ?, email = ?, attempts = 0
+      WHERE challenge_hash = ?
+    `).run(hashToken(code), payload.newEmail, challengeHash);
+    try {
+      await mailer.sendSecurityCode({
+        email: payload.newEmail,
+        username: user.username,
+        code,
+        purpose: 'Neue E-Mail-Adresse bestätigen',
+        message: 'Gib diesen Code ein, um den Wechsel deiner E-Mail-Adresse abzuschließen.'
+      });
+    } catch (error) {
+      db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challengeHash);
+      console.error('[EmailJS] Code an die neue E-Mail-Adresse konnte nicht versendet werden:', error.message);
+      res.status(503).json({ error: 'Der Code konnte nicht an die neue E-Mail-Adresse versendet werden. Bitte starte den Vorgang erneut.' });
+      return;
+    }
+    res.json({ nextStep: 'new_email', message: 'Der Code für deine neue E-Mail-Adresse wurde gesendet.' });
+    return;
+  }
+
+  if (challenge.purpose === 'change_email_new') {
+    if (db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id <> ?').get(payload.newEmail, user.id)) {
+      res.status(409).json({ error: 'Diese E-Mail-Adresse wird bereits verwendet.' });
+      return;
+    }
+    await mailer.sendSecurityCode({
+      email: payload.oldEmail,
+      username: user.username,
+      purpose: 'E-Mail-Adresse geändert',
+      message: `Die E-Mail-Adresse deines mingle-Kontos wurde in ${payload.newEmail} geändert.`
+    });
+    db.transaction(() => {
+      db.prepare('UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(payload.newEmail, user.id);
+      db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challengeHash);
+    })();
+    res.json({
+      message: 'E-Mail-Adresse erfolgreich geändert.',
+      user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id))
+    });
+    return;
+  }
+
+  if (challenge.purpose === 'password_change') {
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?, auth_version = auth_version + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(payload.passwordHash, user.id);
+      db.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL')
+        .run(new Date().toISOString(), user.id);
+      db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challengeHash);
+    })();
+    realtime.disconnectUser(user.id);
+    clearRefreshCookie(res);
+    res.json({ message: 'Passwort geändert. Bitte melde dich erneut an.' });
+    return;
+  }
+
+  if (challenge.purpose === 'disable_2fa') {
+    db.transaction(() => {
+      db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').run(user.id);
+      db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challengeHash);
+    })();
+    res.json({
+      message: '2FA wurde erfolgreich deaktiviert.',
+      user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id))
+    });
+    return;
+  }
+
+  if (challenge.purpose === 'profile_change') {
+    try {
+      db.prepare(`
+        UPDATE users SET username = ?, age = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(payload.username, payload.age, user.id);
+    } catch (error) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        res.status(409).json({ error: 'Dieser Benutzername ist bereits vergeben.' });
+        return;
+      }
+      throw error;
+    }
+    db.prepare('DELETE FROM email_auth_challenges WHERE challenge_hash = ?').run(challengeHash);
+    res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)) });
+    return;
+  }
+
+  if (challenge.purpose === 'delete_account') {
+    realtime.disconnectUser(user.id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    clearRefreshCookie(res);
+    res.json({ message: 'Dein Konto wurde gelöscht.' });
+    return;
+  }
+
+  res.status(400).json({ error: 'Unbekannte Sicherheitsaktion.' });
 }));
 
 authRouter.post('/refresh', (req, res) => {
@@ -616,7 +804,7 @@ authRouter.post('/forgot-password', authLimiter, asyncRoute(async (req, res) => 
     res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein.' });
     return;
   }
-  const user = db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get(email);
+  const user = db.prepare('SELECT id, email, username FROM users WHERE email = ? COLLATE NOCASE').get(email);
   if (user) {
     const rawToken = createOpaqueToken();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -627,7 +815,7 @@ authRouter.post('/forgot-password', authLimiter, asyncRoute(async (req, res) => 
     `).run(hashToken(rawToken), user.id, expiresAt);
     const resetUrl = `${config.clientOrigin}/reset-password?token=${encodeURIComponent(rawToken)}`;
     try {
-      await sendAccountLink({ email: user.email, label: 'Passwort zurücksetzen', url: resetUrl });
+      await mailer.sendPasswordReset({ email: user.email, username: user.username, url: resetUrl });
     } catch (error) {
       db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(user.id);
       console.error('[E-Mail] Passwort-Reset-Link konnte nicht versendet werden:', error.message);
@@ -682,7 +870,7 @@ authRouter.get('/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(user) });
 });
 
-authRouter.patch('/me', requireAuth, (req, res) => {
+authRouter.patch('/me', requireAuth, asyncRoute(async (req, res) => {
   const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub);
   if (!current) {
     res.status(404).json({ error: 'Konto nicht gefunden.' });
@@ -702,28 +890,33 @@ authRouter.patch('/me', requireAuth, (req, res) => {
   }
   if (current.totp_enabled && username !== current.username) {
     const totpCode = typeof req.body.totpCode === 'string' ? req.body.totpCode.replace(/\s+/g, '') : '';
-    if (!totpCode || !authenticator.verify({ token: totpCode, secret: current.totp_secret })) {
+    if (!totpCode || !(await isValidTotpCode(totpCode, current.totp_secret))) {
       res.status(400).json({ error: '2FA-Sicherheitscode ist für eine Namensänderung erforderlich oder ungültig.' });
       return;
     }
   }
 
-  try {
-    db.prepare(`
-      UPDATE users SET username = ?, age = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-    `).run(username, age, current.id);
-  } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      res.status(409).json({ error: 'Dieser Benutzername ist bereits vergeben.' });
-      return;
-    }
-    throw error;
+  if (username === current.username && age === current.age) {
+    res.json({ user: publicUser(current) });
+    return;
   }
-  const updated = db.prepare(`
-    SELECT * FROM users WHERE id = ?
-  `).get(current.id);
-  res.json({ user: publicUser(updated) });
-});
+  try {
+    const challengeToken = await startEmailChallenge({
+      user: current,
+      purpose: 'profile_change',
+      payload: { username, age },
+      message: 'Es wurde angefordert, die Profildaten deines mingle-Kontos zu ändern.'
+    });
+    res.json({
+      verificationRequired: true,
+      challengeToken,
+      message: 'Ein Sicherheitscode wurde per E-Mail gesendet. Gib ihn ein, um die Profiländerung abzuschließen.'
+    });
+  } catch (error) {
+    console.error('[EmailJS] Code für Profiländerung konnte nicht versendet werden:', error.message);
+    res.status(503).json({ error: 'Der Sicherheitscode konnte nicht versendet werden. Bitte versuche es erneut.' });
+  }
+}));
 
 authRouter.post('/change-email', requireAuth, asyncRoute(async (req, res) => {
   const newEmail = normalizeEmail(req.body.newEmail);
@@ -732,29 +925,42 @@ authRouter.post('/change-email', requireAuth, asyncRoute(async (req, res) => {
     res.status(400).json({ error: 'Bitte gib eine gültige neue E-Mail-Adresse ein.' });
     return;
   }
-  const user = db.prepare('SELECT id, email, password_hash, totp_enabled, totp_secret FROM users WHERE id = ?').get(req.auth.sub);
+  const user = db.prepare('SELECT id, email, username, password_hash, totp_enabled, totp_secret FROM users WHERE id = ?').get(req.auth.sub);
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
     res.status(401).json({ error: 'Das Passwort ist nicht korrekt.' });
     return;
   }
   if (user.totp_enabled) {
     const totpCode = typeof req.body.totpCode === 'string' ? req.body.totpCode.replace(/\s+/g, '') : '';
-    if (!totpCode || !authenticator.verify({ token: totpCode, secret: user.totp_secret })) {
+    if (!totpCode || !(await isValidTotpCode(totpCode, user.totp_secret))) {
       res.status(400).json({ error: '2FA-Sicherheitscode ist für eine E-Mail-Änderung erforderlich oder ungültig.' });
       return;
     }
   }
-  try {
-    db.prepare('UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newEmail, user.id);
-  } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      res.status(409).json({ error: 'Diese E-Mail-Adresse wird bereits verwendet.' });
-      return;
-    }
-    throw error;
+  if (newEmail.toLowerCase() === user.email.toLowerCase()) {
+    res.status(400).json({ error: 'Die neue E-Mail-Adresse entspricht bereits deiner aktuellen Adresse.' });
+    return;
   }
-  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
-  res.json({ message: 'E-Mail-Adresse erfolgreich geändert.', user: publicUser(updatedUser) });
+  if (db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get(newEmail)) {
+    res.status(409).json({ error: 'Diese E-Mail-Adresse wird bereits verwendet.' });
+    return;
+  }
+  try {
+    const challengeToken = await startEmailChallenge({
+      user,
+      purpose: 'change_email_old',
+      payload: { oldEmail: user.email, newEmail },
+      message: 'Gib diesen Code ein, um zu bestätigen, dass du Zugriff auf deine bisherige E-Mail-Adresse hast.'
+    });
+    res.json({
+      challengeToken,
+      step: 'old_email',
+      message: 'Ein Bestätigungscode wurde an deine bisherige E-Mail-Adresse gesendet.'
+    });
+  } catch (error) {
+    console.error('[EmailJS] E-Mail-Wechselcode konnte nicht versendet werden:', error.message);
+    res.status(503).json({ error: 'Der Bestätigungscode konnte nicht versendet werden. Bitte versuche es später erneut.' });
+  }
 }));
 
 authRouter.post('/change-password', requireAuth, asyncRoute(async (req, res) => {
@@ -775,26 +981,29 @@ authRouter.post('/change-password', requireAuth, asyncRoute(async (req, res) => 
   }
   if (user.totp_enabled) {
     const totpCode = typeof req.body.totpCode === 'string' ? req.body.totpCode.replace(/\s+/g, '') : '';
-    if (!totpCode || !authenticator.verify({ token: totpCode, secret: user.totp_secret })) {
+    if (!totpCode || !(await isValidTotpCode(totpCode, user.totp_secret))) {
       res.status(400).json({ error: '2FA-Sicherheitscode ist für eine Passwortänderung erforderlich oder ungültig.' });
       return;
     }
   }
   const passwordHash = await bcrypt.hash(newPassword, config.bcryptRounds);
-  const revokeSessions = db.transaction(() => {
-    db.prepare(`
-      UPDATE users
-      SET password_hash = ?, auth_version = auth_version + 1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(passwordHash, user.id);
-    db.prepare(`
-      UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL
-    `).run(new Date().toISOString(), user.id);
-  });
-  revokeSessions();
-  realtime.disconnectUser(user.id);
-  clearRefreshCookie(res);
-  res.json({ message: 'Passwort geändert. Bitte melde dich erneut an.' });
+  const fullUser = db.prepare('SELECT id, email, username FROM users WHERE id = ?').get(user.id);
+  try {
+    const challengeToken = await startEmailChallenge({
+      user: fullUser,
+      purpose: 'password_change',
+      payload: { passwordHash },
+      message: 'Gib diesen Code ein, um die Passwortänderung abzuschließen.'
+    });
+    res.json({
+      verificationRequired: true,
+      challengeToken,
+      message: 'Ein Sicherheitscode wurde per E-Mail gesendet. Gib ihn ein, um das neue Passwort zu speichern.'
+    });
+  } catch (error) {
+    console.error('[EmailJS] Code für Passwortänderung konnte nicht versendet werden:', error.message);
+    res.status(503).json({ error: 'Der Sicherheitscode konnte nicht versendet werden. Dein Passwort wurde nicht geändert.' });
+  }
 }));
 
 authRouter.delete('/me', requireAuth, asyncRoute(async (req, res) => {
@@ -802,15 +1011,20 @@ authRouter.delete('/me', requireAuth, asyncRoute(async (req, res) => {
     res.status(400).json({ error: 'Bitte bestätige die Kontolöschung mit deinem Passwort.' });
     return;
   }
-  const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.auth.sub);
+  const user = db.prepare('SELECT id, email, username, password_hash FROM users WHERE id = ?').get(req.auth.sub);
   if (!user || !(await bcrypt.compare(req.body.password, user.password_hash))) {
     res.status(401).json({ error: 'Das Passwort ist nicht korrekt.' });
     return;
   }
-  realtime.disconnectUser(user.id);
-  db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
-  clearRefreshCookie(res);
-  res.status(204).end();
+  const challengeToken = await startEmailChallenge({
+    user,
+    purpose: 'delete_account',
+    message: 'Es wurde angefordert, dein mingle-Konto dauerhaft zu löschen. Gib den Code nur ein, wenn du diese Löschung selbst gestartet hast.'
+  });
+  res.json({
+    challengeToken,
+    message: 'Ein Sicherheitscode wurde per E-Mail gesendet. Bestätige damit die Kontolöschung.'
+  });
 }));
 
 app.use('/api/auth', authRouter);

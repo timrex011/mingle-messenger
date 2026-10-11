@@ -101,10 +101,8 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.4.0",
-    "nodemailer": "^10.0.16",
     "otplib": "^13.5.0",
     "qrcode": "^1.5.4",
-    "resend": "^6.32.1",
     "socket.io": "^4.8.1"
   }
 }

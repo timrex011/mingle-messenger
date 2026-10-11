@@ -194,8 +194,11 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [canResendVerification, setCanResendVerification] = useState(false);
+  const [verificationRequired, setVerificationRequired] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
   const [twoFactor, setTwoFactor] = useState(null);
   const [totpCode, setTotpCode] = useState('');
+  const [emailCode, setEmailCode] = useState('');
 
   function update(event) {
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -211,19 +214,22 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
     setCanResendVerification(false);
     const { deviceId, deviceName } = getClientDeviceInfo();
     try {
-      if (mode === 'register') {
+      if (verificationRequired) {
+        const result = await request('/auth/verify-email', {
+          method: 'POST',
+          body: { email: form.email, code: verificationCode }
+        });
+        setVerificationRequired(false);
+        setVerificationCode('');
+        setMode('login');
+        setNotice(result.message);
+      } else if (mode === 'register') {
         const result = await request('/auth/register', {
           method: 'POST',
           body: { email: form.email, password: form.password, username: form.username, age: Number(form.age) }
         });
         setNotice(result.message);
-        // Only show resend button if email verification is actually required
-        const needsVerification = result.message.includes('bestätige') || result.message.includes('Postfach');
-        setCanResendVerification(needsVerification);
-        if (!needsVerification) {
-          // Auto-verified – switch to login so user can log in immediately
-          setTimeout(() => setMode('login'), 1500);
-        }
+        setVerificationRequired(Boolean(result.verificationRequired));
       } else if (mode === 'forgot') {
         const result = await request('/auth/forgot-password', { method: 'POST', body: { email: form.email } });
         setNotice(result.message);
@@ -232,9 +238,13 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
           method: 'POST',
           body: { identifier: form.email, password: form.password, deviceId, deviceName }
         });
-        if (result.twoFactorRequired) {
-          setTwoFactor({ tempToken: result.tempToken });
+        if (result.emailCodeRequired) {
+          setTwoFactor({
+            challengeToken: result.challengeToken,
+            twoFactorRequired: result.twoFactorRequired
+          });
           setTotpCode('');
+          setEmailCode('');
           setError('');
         } else {
           onSession(result);
@@ -273,7 +283,13 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
     try {
       const result = await request('/auth/2fa/verify', {
         method: 'POST',
-        body: { tempToken: twoFactor.tempToken, code: totpCode, deviceId, deviceName }
+        body: {
+          challengeToken: twoFactor.challengeToken,
+          emailCode,
+          ...(twoFactor.twoFactorRequired ? { totpCode } : {}),
+          deviceId,
+          deviceName
+        }
       });
       onSession(result);
     } catch (requestError) {
@@ -283,7 +299,7 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
     }
   }
 
-  const isRegister = mode === 'register';
+  const isRegister = mode === 'register' && !verificationRequired;
   const isForgot = mode === 'forgot';
 
   if (twoFactor) {
@@ -313,14 +329,18 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
           <div className="auth-content">
             <div className="auth-heading">
               <span className="auth-kicker">ZWEI-FAKTOR-AUTHENTIFIZIERUNG</span>
-              <h2>Code eingeben</h2>
-              <p>Öffne deine Authenticator-App und gib den 6-stelligen Code ein.</p>
+              <h2>Login bestätigen</h2>
+              <p>Gib den Code aus deinem E-Mail-Postfach ein{twoFactor.twoFactorRequired ? ' und bestätige zusätzlich mit deiner Authenticator-App.' : '.'}</p>
             </div>
             <form className="auth-form" onSubmit={verifyTotp}>
               <label className="field">
-                <span>Authenticator-Code</span>
-                <div className="input-wrap"><ShieldCheck size={17} /><input name="totpCode" value={totpCode} onChange={(e) => { setTotpCode(e.target.value); setError(''); }} placeholder="000 000" maxLength="7" autoComplete="one-time-code" inputMode="numeric" autoFocus required /></div>
+                <span>E-Mail-Code</span>
+                <div className="input-wrap"><ShieldCheck size={17} /><input name="emailCode" value={emailCode} onChange={(e) => { setEmailCode(e.target.value); setError(''); }} placeholder="000000" maxLength="6" autoComplete="one-time-code" inputMode="numeric" autoFocus required /></div>
               </label>
+              {twoFactor.twoFactorRequired && <label className="field">
+                <span>Authenticator-Code</span>
+                <div className="input-wrap"><ShieldCheck size={17} /><input name="totpCode" value={totpCode} onChange={(e) => { setTotpCode(e.target.value); setError(''); }} placeholder="000 000" maxLength="7" autoComplete="one-time-code" inputMode="numeric" required /></div>
+              </label>}
               {error && <div className="form-message error" role="alert">{error}</div>}
               <button className="button button-primary auth-submit" type="submit" disabled={busy}>
                 {busy ? 'Wird überprüft …' : 'Bestätigen'}
@@ -330,7 +350,7 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
             <div className="auth-links">
               <button className="text-button" onClick={() => { setTwoFactor(null); setError(''); setTotpCode(''); }}><ArrowLeft size={15} /> Zurück zur Anmeldung</button>
             </div>
-            <div className="auth-assurance"><ShieldCheck size={16} /><span>Der Code wird von deiner Authenticator-App generiert.</span></div>
+            <div className="auth-assurance"><ShieldCheck size={16} /><span>Der E-Mail-Code ist 10 Minuten gültig.</span></div>
           </div>
           <div className="auth-panel-footer"><button><CircleHelp size={15} /> Hilfe &amp; Datenschutz</button><span>Deutsch <ChevronDown size={13} /></span></div>
         </section>
@@ -364,12 +384,16 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
         <div className="mobile-brand"><Brand /></div>
         <div className="auth-content">
           <div className="auth-heading">
-            <span className="auth-kicker">{isRegister ? 'SCHÖN, DASS DU DA BIST' : isForgot ? 'KEIN PROBLEM' : 'WILLKOMMEN ZURÜCK'}</span>
-            <h2>{isRegister ? 'Dein Konto. Dein Raum.' : isForgot ? 'Passwort zurücksetzen' : 'Melde dich an.'}</h2>
-            <p>{isRegister ? 'Ein paar Angaben, dann kann es losgehen.' : isForgot ? 'Wir schicken dir einen Link zum Zurücksetzen.' : 'Deine Gespräche warten schon auf dich.'}</p>
+            <span className="auth-kicker">{verificationRequired ? 'KONTOBESTÄTIGUNG' : isRegister ? 'SCHÖN, DASS DU DA BIST' : isForgot ? 'KEIN PROBLEM' : 'WILLKOMMEN ZURÜCK'}</span>
+            <h2>{verificationRequired ? 'E-Mail bestätigen' : isRegister ? 'Dein Konto. Dein Raum.' : isForgot ? 'Passwort zurücksetzen' : 'Melde dich an.'}</h2>
+            <p>{verificationRequired ? 'Gib den 6-stelligen Bestätigungscode aus deinem Postfach ein.' : isRegister ? 'Ein paar Angaben, dann kann es losgehen.' : isForgot ? 'Wir schicken dir einen Link zum Zurücksetzen.' : 'Deine Gespräche warten schon auf dich.'}</p>
           </div>
 
           <form className="auth-form" onSubmit={submit}>
+            {verificationRequired && <label className="field">
+              <span>Bestätigungscode</span>
+              <div className="input-wrap"><ShieldCheck size={17} /><input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} placeholder="000000" maxLength="6" inputMode="numeric" autoComplete="one-time-code" required /></div>
+            </label>}
             {isRegister && (
               <label className="field">
                 <span>Benutzername</span>
@@ -377,11 +401,11 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
                 <small>3–20 Zeichen, Buchstaben, Zahlen oder _</small>
               </label>
             )}
-            <label className="field">
+            {!verificationRequired && <label className="field">
               <span>{isRegister || isForgot ? 'E-Mail-Adresse' : 'E-Mail oder Benutzername'}</span>
               <div className="input-wrap"><span className="input-at">@</span><input name="email" value={form.email} onChange={update} placeholder={isRegister || isForgot ? 'du@beispiel.de' : 'Dein Login'} autoComplete="username" required /></div>
-            </label>
-            {!isForgot && (
+            </label>}
+            {!verificationRequired && !isForgot && (
               <label className="field">
                 <span>{isRegister ? 'Passwort' : 'Passwort'}</span>
                 <div className="input-wrap"><LockKeyhole size={17} /><input name="password" type="password" value={form.password} onChange={update} placeholder="Mindestens 8 Zeichen" minLength="8" maxLength="128" autoComplete={isRegister ? 'new-password' : 'current-password'} required /></div>
@@ -398,27 +422,27 @@ function AuthPage({ onSession, initialMode = 'login', onBackToLanding }) {
             {error && <div className="form-message error" role="alert">{error}</div>}
             {notice && <div className="form-message success" role="status">{notice}</div>}
             <button className="button button-primary auth-submit" type="submit" disabled={busy}>
-              {busy ? 'Einen Moment …' : isRegister ? 'Konto erstellen' : isForgot ? 'Link anfordern' : 'Anmelden'}
+              {busy ? 'Einen Moment …' : verificationRequired ? 'E-Mail bestätigen' : isRegister ? 'Konto erstellen' : isForgot ? 'Link anfordern' : 'Anmelden'}
               {!busy && <ArrowRight size={17} />}
             </button>
           </form>
 
-          {canResendVerification && <button
+          {(canResendVerification || verificationRequired) && <button
             className="text-button resend-verification"
             type="button"
             disabled={busy}
             onClick={resendVerification}
-          >{busy ? 'Wird versendet …' : 'Bestätigungslink erneut senden'}</button>}
+          >{busy ? 'Wird versendet …' : 'Bestätigungscode erneut senden'}</button>}
 
           <div className="auth-links">
-            {mode === 'login' && <button className="text-button" onClick={() => { setMode('forgot'); setNotice(''); setError(''); }}>Passwort vergessen?</button>}
-            {mode === 'forgot' && <button className="text-button" onClick={() => { setMode('login'); setNotice(''); setError(''); }}><ArrowLeft size={15} /> Zurück zur Anmeldung</button>}
-            <div className="auth-switch">
+            {!verificationRequired && mode === 'login' && <button className="text-button" type="button" onClick={() => { setMode('forgot'); setNotice(''); setError(''); }}>Passwort vergessen?</button>}
+            {!verificationRequired && mode === 'forgot' && <button className="text-button" type="button" onClick={() => { setMode('login'); setNotice(''); setError(''); }}><ArrowLeft size={15} /> Zurück zur Anmeldung</button>}
+            {!verificationRequired && <div className="auth-switch">
               {isRegister ? 'Schon ein Konto?' : 'Noch kein Konto?'}
               <button className="text-button" onClick={() => { setMode(isRegister ? 'login' : 'register'); setNotice(''); setError(''); }}>
                 {isRegister ? 'Anmelden' : 'Jetzt registrieren'}
               </button>
-            </div>
+            </div>}
           </div>
 
           <div className="auth-assurance"><ShieldCheck size={16} /><span>Deine Daten bleiben bei dir. Wir fragen nie nach deiner Telefonnummer.</span></div>
@@ -511,21 +535,32 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
   const [username, setUsername] = useState(user.username);
   const [age, setAge] = useState(String(user.age));
   const [profileTotpCode, setProfileTotpCode] = useState('');
+  const [profileChallenge, setProfileChallenge] = useState(null);
+  const [profileEmailCode, setProfileEmailCode] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [passwordTotpCode, setPasswordTotpCode] = useState('');
+  const [passwordChallenge, setPasswordChallenge] = useState(null);
+  const [passwordEmailCode, setPasswordEmailCode] = useState('');
 
   const [newEmail, setNewEmail] = useState('');
   const [emailPassword, setEmailPassword] = useState('');
   const [emailTotpCode, setEmailTotpCode] = useState('');
+  const [emailChallenge, setEmailChallenge] = useState(null);
+  const [emailVerificationCode, setEmailVerificationCode] = useState('');
 
   const [deletePassword, setDeletePassword] = useState('');
+  const [deleteChallenge, setDeleteChallenge] = useState(null);
+  const [deleteEmailCode, setDeleteEmailCode] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [totpSetup, setTotpSetup] = useState(null);
   const [totpCode, setTotpCode] = useState('');
+  const [totpEmailCode, setTotpEmailCode] = useState('');
   const [disablePassword, setDisablePassword] = useState('');
+  const [disableChallenge, setDisableChallenge] = useState(null);
+  const [disableEmailCode, setDisableEmailCode] = useState('');
 
   async function saveProfile(event) {
     event.preventDefault();
@@ -543,9 +578,14 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
         onToken,
         body
       });
-      onUserChange(result.user);
-      setProfileTotpCode('');
-      setMessage('Dein Profil wurde aktualisiert.');
+      if (result.verificationRequired) {
+        setProfileChallenge(result.challengeToken);
+        setMessage(result.message);
+      } else {
+        onUserChange(result.user);
+        setProfileTotpCode('');
+        setMessage('Dein Profil wurde aktualisiert.');
+      }
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -559,22 +599,38 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
     setError('');
     setMessage('');
     try {
-      const body = { newEmail, password: emailPassword };
-      if (user.totpEnabled) {
-        body.totpCode = emailTotpCode;
+      if (emailChallenge) {
+        const result = await request('/auth/verify-action', {
+          method: 'POST',
+          token,
+          onToken,
+          body: { challengeToken: emailChallenge.token, code: emailVerificationCode }
+        });
+        if (result.nextStep) {
+          setEmailChallenge({ ...emailChallenge, step: result.nextStep });
+          setEmailVerificationCode('');
+          setMessage(result.message);
+        } else {
+          if (result.user) onUserChange(result.user);
+          setMessage(result.message);
+          setEmailChallenge(null);
+          setEmailVerificationCode('');
+          setNewEmail('');
+          setEmailPassword('');
+          setEmailTotpCode('');
+        }
+        return;
       }
+      const body = { newEmail, password: emailPassword };
+      if (user.totpEnabled) body.totpCode = emailTotpCode;
       const result = await request('/auth/change-email', {
         method: 'POST',
         token,
         onToken,
         body
       });
-      if (result.user) onUserChange(result.user);
-      else onUserChange({ ...user, email: newEmail });
-      setMessage(result.message || 'E-Mail-Adresse erfolgreich geändert.');
-      setNewEmail('');
-      setEmailPassword('');
-      setEmailTotpCode('');
+      setEmailChallenge({ token: result.challengeToken, step: result.step });
+      setMessage(result.message);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -592,17 +648,14 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
       if (user.totpEnabled) {
         body.totpCode = passwordTotpCode;
       }
-      await request('/auth/change-password', {
+      const result = await request('/auth/change-password', {
         method: 'POST',
         token,
         onToken,
         body
       });
-      setMessage('Passwort geändert. Bitte melde dich erneut an.');
-      setCurrentPassword('');
-      setNewPassword('');
-      setPasswordTotpCode('');
-      window.setTimeout(onLogout, 900);
+      setPasswordChallenge(result.challengeToken);
+      setMessage(result.message);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -610,14 +663,84 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
     }
   }
 
+  async function verifyProfileChange(event) {
+      event.preventDefault();
+      setBusy(true); setError(''); setMessage('');
+      try {
+        const result = await request('/auth/verify-action', {
+          method: 'POST', token, onToken,
+          body: { challengeToken: profileChallenge, code: profileEmailCode }
+        });
+        onUserChange(result.user);
+        setProfileChallenge(null);
+        setProfileEmailCode('');
+        setProfileTotpCode('');
+        setMessage('Dein Profil wurde aktualisiert.');
+      } catch (requestError) { setError(requestError.message); }
+      finally { setBusy(false); }
+  }
+
+  async function verifyPasswordChange(event) {
+      event.preventDefault();
+      setBusy(true); setError(''); setMessage('');
+      try {
+        const result = await request('/auth/verify-action', {
+          method: 'POST', token, onToken,
+          body: { challengeToken: passwordChallenge, code: passwordEmailCode }
+        });
+        setMessage(result.message);
+        setPasswordChallenge(null);
+        setPasswordEmailCode('');
+        setCurrentPassword('');
+        setNewPassword('');
+        setPasswordTotpCode('');
+        window.setTimeout(onLogout, 900);
+      } catch (requestError) { setError(requestError.message); }
+      finally { setBusy(false); }
+  }
+
+  async function verifyDisableTwoFactor(event) {
+      event.preventDefault();
+      setBusy(true); setError(''); setMessage('');
+      try {
+        if (!disableChallenge) {
+          const result = await request('/auth/2fa/disable', {
+            method: 'POST', token, onToken, body: { password: disablePassword }
+          });
+          setDisableChallenge(result.challengeToken);
+          setMessage(result.message);
+          return;
+        }
+        const result = await request('/auth/verify-action', {
+          method: 'POST', token, onToken,
+          body: { challengeToken: disableChallenge, code: disableEmailCode }
+        });
+        onUserChange(result.user);
+        setDisableChallenge(null);
+        setDisableEmailCode('');
+        setDisablePassword('');
+        setMessage(result.message);
+      } catch (requestError) { setError(requestError.message); }
+      finally { setBusy(false); }
+  }
+
   async function deleteAccount(event) {
     event.preventDefault();
-    if (!window.confirm('Dein Konto und deine Profildaten werden dauerhaft gelöscht. Möchtest du fortfahren?')) return;
+    if (!deleteChallenge && !window.confirm('Dein Konto und deine Profildaten werden dauerhaft gelöscht. Möchtest du fortfahren?')) return;
     setBusy(true);
     setError('');
     try {
-      await request('/auth/me', { method: 'DELETE', token, onToken, body: { password: deletePassword } });
-      onLogout();
+      if (!deleteChallenge) {
+        const result = await request('/auth/me', { method: 'DELETE', token, onToken, body: { password: deletePassword } });
+        setDeleteChallenge(result.challengeToken);
+        setMessage(result.message);
+      } else {
+        await request('/auth/verify-action', {
+          method: 'POST', token, onToken,
+          body: { challengeToken: deleteChallenge, code: deleteEmailCode }
+        });
+        onLogout();
+      }
     } catch (requestError) {
       setError(requestError.message);
       setBusy(false);
@@ -633,13 +756,13 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
       {(message || error) && <div className={`form-message ${error ? 'error' : 'success'}`} role={error ? 'alert' : 'status'}>{error || message}</div>}
       <section className="settings-card">
         <div className="settings-card-title"><span className="settings-icon"><UserRound size={18} /></span><div><h2>Profil &amp; Benutzername</h2><p>Passe deinen Benutzernamen an.</p></div></div>
-        <form className="settings-form" onSubmit={saveProfile}>
-          <label className="field"><span>Aktuelle E-Mail</span><input className="plain-input readonly" value={user.email} readOnly /></label>
-          <div className="settings-fields">
+        <form className="settings-form" onSubmit={profileChallenge ? verifyProfileChange : saveProfile}>
+          {!profileChallenge && <label className="field"><span>Aktuelle E-Mail</span><input className="plain-input readonly" value={user.email} readOnly /></label>}
+          {!profileChallenge && <div className="settings-fields">
             <label className="field"><span>Benutzername</span><input className="plain-input" value={username} onChange={(event) => setUsername(event.target.value)} minLength="3" maxLength="20" required /></label>
             <label className="field"><span>Alter</span><input className="plain-input" type="number" value={age} onChange={(event) => setAge(event.target.value)} min="13" max="120" required /></label>
-          </div>
-          {user.totpEnabled && username !== user.username && (
+          </div>}
+          {!profileChallenge && user.totpEnabled && username !== user.username && (
             <div style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:10,padding:'12px 14px',margin:'10px 0'}}>
               <p style={{fontSize:'0.85rem',fontWeight:700,color:'#818cf8',margin:'0 0 6px',display:'flex',alignItems:'center',gap:6}}>
                 <ShieldCheck size={15}/> 2FA-Sicherheitsabfrage für Namensänderung
@@ -647,15 +770,18 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
               <label className="field"><span>6-stelliger Authenticator-Code</span><input className="plain-input" value={profileTotpCode} onChange={(e)=>setProfileTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
             </div>
           )}
-          <button className="button button-dark" disabled={busy}>Änderungen speichern</button>
+          {profileChallenge && <label className="field"><span>Sicherheitscode aus der E-Mail</span><input className="plain-input" value={profileEmailCode} onChange={(event) => setProfileEmailCode(event.target.value)} inputMode="numeric" maxLength="6" required /></label>}
+          {profileChallenge
+            ? <button className="button button-dark" disabled={busy}>Profiländerung bestätigen</button>
+            : <button className="button button-dark" disabled={busy}>Änderungen speichern</button>}
         </form>
       </section>
       <section className="settings-card">
         <div className="settings-card-title"><span className="settings-icon blue"><ShieldCheck size={18} /></span><div><h2>E-Mail-Adresse ändern</h2><p>Aktuelle E-Mail: <b>{user.email}</b></p></div></div>
         <form className="settings-form" onSubmit={changeEmail}>
-          <label className="field"><span>Neue E-Mail-Adresse</span><input className="plain-input" type="email" value={newEmail} onChange={(e)=>setNewEmail(e.target.value)} placeholder="neu@beispiel.de" required /></label>
-          <label className="field"><span>Aktuelles Passwort bestätigen</span><input className="plain-input" type="password" value={emailPassword} onChange={(e)=>setEmailPassword(e.target.value)} autoComplete="current-password" required /></label>
-          {user.totpEnabled && (
+          {!emailChallenge && <label className="field"><span>Neue E-Mail-Adresse</span><input className="plain-input" type="email" value={newEmail} onChange={(e)=>setNewEmail(e.target.value)} placeholder="neu@beispiel.de" required /></label>}
+          {!emailChallenge && <label className="field"><span>Aktuelles Passwort bestätigen</span><input className="plain-input" type="password" value={emailPassword} onChange={(e)=>setEmailPassword(e.target.value)} autoComplete="current-password" required /></label>}
+          {!emailChallenge && user.totpEnabled && (
             <div style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:10,padding:'12px 14px',margin:'10px 0'}}>
               <p style={{fontSize:'0.85rem',fontWeight:700,color:'#818cf8',margin:'0 0 6px',display:'flex',alignItems:'center',gap:6}}>
                 <ShieldCheck size={15}/> 2FA-Sicherheitsabfrage für E-Mail-Änderung
@@ -663,15 +789,19 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
               <label className="field"><span>6-stelliger Authenticator-Code</span><input className="plain-input" value={emailTotpCode} onChange={(e)=>setEmailTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
             </div>
           )}
-          <button className="button button-dark" disabled={busy}>E-Mail aktualisieren</button>
+          {emailChallenge && <label className="field">
+            <span>{emailChallenge.step === 'old_email' ? 'Code aus der bisherigen E-Mail-Adresse' : 'Code aus der neuen E-Mail-Adresse'}</span>
+            <input className="plain-input" value={emailVerificationCode} onChange={(e)=>setEmailVerificationCode(e.target.value)} placeholder="000000" inputMode="numeric" maxLength="6" required />
+          </label>}
+          <button className="button button-dark" disabled={busy}>{emailChallenge ? 'Code bestätigen' : 'E-Mail aktualisieren'}</button>
         </form>
       </section>
       <section className="settings-card">
         <div className="settings-card-title"><span className="settings-icon mint"><LockKeyhole size={18} /></span><div><h2>Passwort ändern</h2><p>Wir melden dich nach der Änderung auf allen Geräten ab.</p></div></div>
-        <form className="settings-form" onSubmit={changePassword}>
-          <label className="field"><span>Aktuelles Passwort</span><input className="plain-input" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required /></label>
-          <label className="field"><span>Neues Passwort</span><input className="plain-input" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength="8" maxLength="128" autoComplete="new-password" required /></label>
-          {user.totpEnabled && (
+        <form className="settings-form" onSubmit={passwordChallenge ? verifyPasswordChange : changePassword}>
+          {!passwordChallenge && <label className="field"><span>Aktuelles Passwort</span><input className="plain-input" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required /></label>}
+          {!passwordChallenge && <label className="field"><span>Neues Passwort</span><input className="plain-input" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength="8" maxLength="128" autoComplete="new-password" required /></label>}
+          {!passwordChallenge && user.totpEnabled && (
             <div style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:10,padding:'12px 14px',margin:'10px 0'}}>
               <p style={{fontSize:'0.85rem',fontWeight:700,color:'#818cf8',margin:'0 0 6px',display:'flex',alignItems:'center',gap:6}}>
                 <ShieldCheck size={15}/> 2FA-Sicherheitsabfrage für Passwortänderung
@@ -679,7 +809,8 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
               <label className="field"><span>6-stelliger Authenticator-Code</span><input className="plain-input" value={passwordTotpCode} onChange={(e)=>setPasswordTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
             </div>
           )}
-          <button className="button button-dark" disabled={busy}>Passwort aktualisieren</button>
+          {passwordChallenge && <label className="field"><span>Sicherheitscode aus der E-Mail</span><input className="plain-input" value={passwordEmailCode} onChange={(event) => setPasswordEmailCode(event.target.value)} inputMode="numeric" maxLength="6" required /></label>}
+          <button className="button button-dark" disabled={busy}>{passwordChallenge ? 'Passwortänderung bestätigen' : 'Passwort aktualisieren'}</button>
         </form>
       </section>
       <section className="settings-card">
@@ -703,36 +834,37 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
             <form onSubmit={async (e) => {
               e.preventDefault(); setBusy(true); setError(''); setMessage('');
               try {
-                const result = await request('/auth/2fa/enable', { method: 'POST', token, onToken, body: { code: totpCode } });
+                const result = await request('/auth/2fa/enable', {
+                  method: 'POST', token, onToken,
+                  body: { code: totpCode, emailCode: totpEmailCode, challengeToken: totpSetup.challengeToken }
+                });
                 setMessage(result.message);
-                setTotpSetup(null); setTotpCode('');
+                setTotpSetup(null); setTotpCode(''); setTotpEmailCode('');
                 onUserChange(result.user || { ...user, totpEnabled: true });
               } catch (e) { setError(e.message); } finally { setBusy(false); }
             }}>
               <label className="field"><span>6-stelliger Code aus der App</span><input className="plain-input" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} placeholder="000 000" maxLength="7" inputMode="numeric" autoComplete="one-time-code" required /></label>
+              <label className="field"><span>6-stelliger Sicherheitscode aus deiner E-Mail</span><input className="plain-input" value={totpEmailCode} onChange={(e) => setTotpEmailCode(e.target.value)} placeholder="000000" maxLength="6" inputMode="numeric" autoComplete="one-time-code" required /></label>
               <button className="button button-dark" disabled={busy}>{busy ? 'Wird überprüft …' : '2FA aktivieren'}</button>
             </form>
           </div>
         )}
         {user.totpEnabled && (
-          <form className="settings-form" onSubmit={async (e) => {
-            e.preventDefault(); setBusy(true); setError(''); setMessage('');
-            try {
-              const result = await request('/auth/2fa/disable', { method: 'POST', token, onToken, body: { password: disablePassword } });
-              setMessage(result.message); setDisablePassword('');
-              onUserChange(result.user || { ...user, totpEnabled: false });
-            } catch (e) { setError(e.message); } finally { setBusy(false); }
-          }}>
-            <label className="field"><span>Passwort bestätigen</span><input className="plain-input" type="password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} autoComplete="current-password" required /></label>
-            <button className="button button-danger" disabled={busy}>2FA deaktivieren</button>
+          <form className="settings-form" onSubmit={verifyDisableTwoFactor}>
+            {!disableChallenge
+              ? <label className="field"><span>Passwort bestätigen</span><input className="plain-input" type="password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} autoComplete="current-password" required /></label>
+              : <label className="field"><span>Sicherheitscode aus der E-Mail</span><input className="plain-input" value={disableEmailCode} onChange={(e) => setDisableEmailCode(e.target.value)} inputMode="numeric" maxLength="6" required /></label>}
+            <button className="button button-danger" disabled={busy}>{disableChallenge ? 'Deaktivierung bestätigen' : '2FA deaktivieren'}</button>
           </form>
         )}
       </section>
       <section className="settings-card danger-card">
         <div className="settings-card-title"><span className="settings-icon rose"><X size={18} /></span><div><h2>Konto löschen</h2><p>Diese Aktion kann nicht rückgängig gemacht werden.</p></div></div>
         <form className="delete-row" onSubmit={deleteAccount}>
-          <label className="field"><span>Mit Passwort bestätigen</span><input className="plain-input" type="password" value={deletePassword} onChange={(event) => setDeletePassword(event.target.value)} autoComplete="current-password" required /></label>
-          <button className="button button-danger" disabled={busy}>Konto dauerhaft löschen</button>
+          {!deleteChallenge
+            ? <label className="field"><span>Mit Passwort bestätigen</span><input className="plain-input" type="password" value={deletePassword} onChange={(event) => setDeletePassword(event.target.value)} autoComplete="current-password" required /></label>
+            : <label className="field"><span>Sicherheitscode aus der E-Mail</span><input className="plain-input" value={deleteEmailCode} onChange={(event) => setDeleteEmailCode(event.target.value)} inputMode="numeric" maxLength="6" required /></label>}
+          <button className="button button-danger" disabled={busy}>{deleteChallenge ? 'Kontolöschung bestätigen' : 'Konto dauerhaft löschen'}</button>
         </form>
       </section>
     </div>

@@ -19,7 +19,8 @@ const SYNCED_TABLES = [
   'user_devices',
   'sessions',
   'email_verification_tokens',
-  'password_reset_tokens'
+  'password_reset_tokens',
+  'email_auth_challenges'
 ];
 
 let syncInterval = null;

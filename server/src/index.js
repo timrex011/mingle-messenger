@@ -23,12 +23,14 @@ async function start() {
   if (mailer.isConfigured) {
     try {
       await mailer.verifyTransport();
-      console.info('SMTP-Verbindung erfolgreich geprüft.');
-    } catch (smtpError) {
-      console.warn('SMTP-Verbindung konnte nicht hergestellt werden (Server startet trotzdem):', smtpError.message);
+      console.info('EmailJS-Konfiguration erfolgreich geprüft.');
+    } catch (emailError) {
+      console.error('EmailJS-Konfiguration ist ungültig:', emailError.message);
+      throw emailError;
     }
   } else {
-    console.warn('SMTP ist nicht konfiguriert. Links werden in der Konsole ausgegeben.');
+    console.error('EmailJS ist nicht vollständig konfiguriert. Der Server kann ohne E-Mail-Versand nicht gestartet werden.');
+    throw new Error('EmailJS-Konfiguration unvollständig.');
   }
 
   await new Promise((resolve, reject) => {
@@ -47,7 +49,7 @@ async function start() {
 }
 
 start().catch((error) => {
-  console.error('[Startfehler] Serverstart fehlgeschlagen. Prüfe .env und die SMTP-Verbindung:', error);
+  console.error('[Startfehler] Serverstart fehlgeschlagen. Prüfe .env und die EmailJS-Konfiguration:', error);
   server.close(() => {
     process.exitCode = 1;
   });
