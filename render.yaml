@@ -11,7 +11,9 @@ services:
       - key: NODE_ENV
         value: production
       - key: AUTO_VERIFY_EMAIL
-        value: "false"
+        value: "true"
+      - key: OWNER_EMAIL
+        value: "riftduels4@gmail.com"
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
