@@ -79,14 +79,17 @@ async function sendAccountLink({ email, label, url }) {
 </html>`;
 
   if (resendClient) {
-    await resendClient.emails.send({
+    const res = await resendClient.emails.send({
       from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
       to: email,
       subject,
       text,
       html
     });
-    return;
+    if (res.error) {
+      throw new Error(`Resend API Fehler: ${res.error.message || JSON.stringify(res.error)}`);
+    }
+    return res;
   }
 
   if (transporter) {
@@ -107,14 +110,17 @@ async function sendTestEmail() {
   const html = '<p>Der E-Mail-Versand von <strong>mingle</strong> ist erfolgreich eingerichtet.</p>';
 
   if (resendClient) {
-    await resendClient.emails.send({
+    const res = await resendClient.emails.send({
       from: config.emailFrom || 'Mingle <onboarding@resend.dev>',
       to: recipient,
       subject,
       text,
       html
     });
-    return;
+    if (res.error) {
+      throw new Error(`Resend API Fehler: ${res.error.message || JSON.stringify(res.error)}`);
+    }
+    return res;
   }
 
   if (!transporter) {
@@ -131,7 +137,9 @@ async function sendTestEmail() {
 }
 
 module.exports = {
-  isConfigured: Boolean(resendClient || transporter),
+  get isConfigured() {
+    return Boolean(resendClient || transporter);
+  },
   sendAccountLink,
   sendTestEmail,
   verifyTransport
