@@ -37,11 +37,13 @@ if (Boolean(smtpUser) !== Boolean(smtpPassword)) {
 // SMTP is optional in production - if not available, accounts are verified automatically
 
 
+const isRender = Boolean(process.env.RENDER);
+
 module.exports = {
   port: parsedPort,
   host: process.env.HOST || (isDesktop ? '127.0.0.1' : '0.0.0.0'),
-  appUrl: (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000').replace(/\/+$/, ''),
-  clientOrigin: (process.env.CLIENT_ORIGIN || process.env.RENDER_EXTERNAL_URL || (isDesktop ? process.env.APP_URL : 'http://localhost:5173') || 'http://localhost:5173').replace(/\/+$/, ''),
+  appUrl: (process.env.RENDER_EXTERNAL_URL || process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+  clientOrigin: (process.env.RENDER_EXTERNAL_URL || process.env.CLIENT_ORIGIN || (isDesktop ? process.env.APP_URL : 'http://localhost:5173') || 'http://localhost:5173').replace(/\/+$/, ''),
   databasePath,
   attachmentPath: path.resolve(process.env.ATTACHMENT_PATH || path.join(path.dirname(databasePath), 'uploads')),
   accessSecret: accessSecret || 'development-access-secret-change-before-production',
@@ -61,7 +63,7 @@ module.exports = {
   bcryptRounds: Math.min(Math.max(Number.parseInt(process.env.BCRYPT_ROUNDS || '12', 10), 10), 15),
   serveClient: isProduction || isDesktop || process.env.SERVE_CLIENT === 'true' || require('node:fs').existsSync(path.join(__dirname, '../../client/dist/index.html')),
   useSecureCookies,
-  autoVerifyEmail: isDesktop ? true : process.env.AUTO_VERIFY_EMAIL === 'true',
+  autoVerifyEmail: isDesktop || isRender || process.env.AUTO_VERIFY_EMAIL === 'true',
   ownerEmail: (process.env.OWNER_EMAIL || 'riftduels4@gmail.com').trim().toLowerCase(),
   tursoDatabaseUrl: process.env.TURSO_DATABASE_URL || '',
   tursoAuthToken: process.env.TURSO_AUTH_TOKEN || '',
