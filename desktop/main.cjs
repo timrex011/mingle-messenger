@@ -1,18 +1,22 @@
+'use strict';
+
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const http = require('node:http');
+const fs   = require('node:fs');
+const http  = require('node:http');
 const https = require('node:https');
-const path = require('node:path');
+const path  = require('node:path');
 
 let splashWindow = null;
-let mainWindow = null;
+let mainWindow   = null;
 let currentServiceUrl = null;
-let isUpdating = false;
+let isUpdating   = false;
+let launched     = false;          // guard: proceedToLaunch runs exactly once
 
 const TAMPER_SECRET = 'mingle-tamper-seal-v1';
-const CLOUD_URL = 'https://mingle-messenger-q6zt.onrender.com';
+const CLOUD_URL = 'https://mingle-messenger.onrender.com';
 const LOCAL_URL = 'http://127.0.0.1:3000';
+
 
 function verifyAppIntegrity() {
   const integrityPath = path.join(__dirname, 'integrity.json');
@@ -128,66 +132,15 @@ function verifyHealth(targetUrl, timeoutMs = 2000) {
   });
 }
 
-function tryStartLocalServer() {
-  const possiblePaths = [
-    'c:\\Users\\alfay\\Desktop\\mini\\server\\src\\index.js',
-    path.join(app.getPath('home'), 'Desktop', 'mini', 'server', 'src', 'index.js')
-  ];
-  for (const serverScript of possiblePaths) {
-    if (fs.existsSync(serverScript)) {
-      try {
-        const { spawn } = require('node:child_process');
-        const child = spawn('node', [serverScript], {
-          cwd: path.dirname(path.dirname(serverScript)),
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true
-        });
-        child.unref();
-        console.info('[Server] Lokaler Server im Hintergrund gestartet.');
-        return true;
-      } catch (err) {
-        console.warn('[Server] Konnte lokalen Server nicht starten:', err.message);
-      }
-    }
-  }
-  return false;
-}
-
 async function resolveServiceUrl() {
-  const saved = getSavedServerUrl();
-  if (saved) {
-    try {
-      await verifyHealth(saved, 1800);
-      return saved;
-    } catch {}
-  }
-
-  // 1. Prüfe Cloud-Server
+  // Immer ausschließlich Render-Cloudserver verwenden
   try {
-    await verifyHealth(CLOUD_URL, 1800);
-    return CLOUD_URL;
+    await verifyHealth(CLOUD_URL, 12000);
   } catch {}
-
-  // 2. Prüfe lokalen Server
-  try {
-    await verifyHealth(LOCAL_URL, 800);
-    return LOCAL_URL;
-  } catch {}
-
-  // 3. Wenn kein Server antwortet, versuche lokalen Server automatisch zu starten
-  if (tryStartLocalServer()) {
-    for (let i = 0; i < 5; i++) {
-      await new Promise((r) => setTimeout(r, 600));
-      try {
-        await verifyHealth(LOCAL_URL, 600);
-        return LOCAL_URL;
-      } catch {}
-    }
-  }
-
-  return null;
+  return CLOUD_URL;
 }
+
+
 
 function sendSplashStatus(status, percent = null) {
   if (splashWindow && !splashWindow.isDestroyed()) {
@@ -293,12 +246,17 @@ function createMainWindow(serviceUrl) {
     }
   });
 
-  if (serviceUrl) {
-    currentServiceUrl = serviceUrl;
-    mainWindow.loadURL(serviceUrl);
-  } else {
-    mainWindow.loadFile(path.join(__dirname, 'connect.html'));
-  }
+  currentServiceUrl = CLOUD_URL;
+  mainWindow.loadURL(CLOUD_URL);
+
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.warn('[Window] Render lädt noch oder nicht erreichbar:', errorCode, errorDescription);
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(CLOUD_URL);
+      }
+    }, 3000);
+  });
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -329,7 +287,10 @@ ipcMain.handle('set-server-url', async (_event, targetUrl) => {
 });
 
 function runStartupSequence() {
+  launched = false;   // reset guard for this startup pass
+  isUpdating = false;
   createSplashWindow();
+
 
   if (!app.isPackaged || !autoUpdater) {
     setTimeout(async () => {
@@ -345,17 +306,15 @@ function runStartupSequence() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
-  let updateFound = false;
-
   autoUpdater.on('checking-for-update', () => {
     sendSplashStatus('Suche nach Updates...');
   });
 
   autoUpdater.on('update-available', (info) => {
-    updateFound = true;
     isUpdating = true;
     sendSplashStatus(`Update v${info.version} gefunden...`, 5);
   });
+
 
   autoUpdater.on('download-progress', (progressObj) => {
     const pct = Math.round(progressObj.percent || 0);
@@ -369,44 +328,47 @@ function runStartupSequence() {
     }, 600);
   });
 
+  // Called exactly once to open the main window
   function proceedToLaunch() {
-    if (isUpdating) return;
-    sendSplashStatus('Mingle wird gestartet...');
+    if (launched || isUpdating) return;
+    launched = true;
+    sendSplashStatus('Verbindung wird hergestellt...');
+    // Show a hint if Render is doing a cold-start (takes up to 8s)
+    const hintTimer = setTimeout(() => sendSplashStatus('Server startet... bitte warten...'), 1500);
     resolveServiceUrl().then((url) => {
-      createMainWindow(url);
+      clearTimeout(hintTimer);
+      sendSplashStatus(url ? 'Mingle startet...' : 'Offline-Modus...');
+      setTimeout(() => createMainWindow(url), 300);
     }).catch(() => {
-      createMainWindow(null);
+      clearTimeout(hintTimer);
+      setTimeout(() => createMainWindow(null), 300);
     });
   }
 
   autoUpdater.on('update-not-available', () => {
-    sendSplashStatus('Mingle ist aktuell');
-    setTimeout(proceedToLaunch, 400);
+    sendSplashStatus('App ist aktuell ✓');
+    setTimeout(proceedToLaunch, 300);
   });
 
   autoUpdater.on('error', (err) => {
     console.warn('[Updater] Fehler:', err?.message || err);
-    sendSplashStatus('Starte Mingle...');
-    setTimeout(proceedToLaunch, 400);
+    proceedToLaunch();
   });
 
-  // Start-Check mit Fallback-Timeout (nach max 3.5s startet die App immer)
+  // Start update check; proceed on promise rejection too
   autoUpdater.checkForUpdates().catch((err) => {
     console.warn('[Updater] Check-Fehler:', err?.message || err);
     proceedToLaunch();
   });
 
-  setTimeout(() => {
-    if (!updateFound && !isUpdating) {
-      proceedToLaunch();
-    }
-  }, 3500);
+  // Absolute safety-net: must be > cloud timeout (8s) + update-check delay
+  setTimeout(() => proceedToLaunch(), 12000);
 
-  // Wiederholungsprüfung im Hintergrund alle 20 Minuten
-  setInterval(() => {
-    autoUpdater.checkForUpdates().catch(() => {});
-  }, 20 * 60 * 1000);
+
+  // Background re-check every 20 min
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 20 * 60 * 1000);
 }
+
 
 app.whenReady().then(() => {
   if (!verifyAppIntegrity()) return;
