@@ -105,6 +105,18 @@ function initRealtime(server) {
             WHERE other.conversation_id = c.id AND other.user_id <> ?
           )
         )
+        AND (
+          NOT EXISTS (SELECT 1 FROM channels channel WHERE channel.id = own.conversation_id)
+          OR EXISTS (
+            SELECT 1
+            FROM channels channel
+            JOIN server_members member
+              ON member.server_id = channel.server_id AND member.user_id = own.user_id
+            JOIN server_roles role ON role.id = member.role_id
+            WHERE channel.id = own.conversation_id
+              AND COALESCE(json_extract(role.permissions, '$.read_messages'), 0) = 1
+          )
+        )
     `).all(userId, userId, userId, userId);
     for (const conversation of conversations) {
       socket.join(`conversation:${conversation.conversation_id}`);
@@ -130,6 +142,19 @@ function initRealtime(server) {
         SELECT type FROM conversations WHERE id = ?
       `).get(payload.conversationId);
       if (!conversation) return;
+      const serverRole = db.prepare(`
+        SELECT sr.permissions
+        FROM channels c
+        JOIN server_members sm ON sm.server_id = c.server_id AND sm.user_id = ?
+        JOIN server_roles sr ON sr.id = sm.role_id
+        WHERE c.id = ?
+      `).get(userId, payload.conversationId);
+      if (serverRole) {
+        const permissions = JSON.parse(serverRole.permissions);
+        if (permissions.read_messages !== true || permissions.send_messages !== true) return;
+      } else if (db.prepare('SELECT 1 FROM channels WHERE id = ?').get(payload.conversationId)) {
+        return;
+      }
       if (conversation.type === 'direct') {
         const blockedPeer = db.prepare(`
           SELECT 1 FROM conversation_members other

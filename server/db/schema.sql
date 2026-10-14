@@ -141,3 +141,28 @@ CREATE TABLE IF NOT EXISTS email_auth_challenges (
 );
 CREATE INDEX IF NOT EXISTS idx_email_auth_challenges_user ON email_auth_challenges(user_id);
 CREATE INDEX IF NOT EXISTS idx_email_auth_challenges_expiry ON email_auth_challenges(expires_at);
+
+CREATE TABLE IF NOT EXISTS server_roles (
+    id TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#818cf8',
+    position INTEGER NOT NULL DEFAULT 0,
+    permissions TEXT NOT NULL DEFAULT '{}',
+    is_system INTEGER NOT NULL DEFAULT 0 CHECK (is_system IN (0, 1)),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (server_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_server_roles_server ON server_roles(server_id, position DESC);
+
+CREATE TABLE IF NOT EXISTS server_invites (
+    code TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP,
+    max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+    use_count INTEGER NOT NULL DEFAULT 0 CHECK (use_count >= 0),
+    revoked_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_server_invites_server ON server_invites(server_id, revoked_at);

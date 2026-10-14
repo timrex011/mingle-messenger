@@ -295,7 +295,7 @@ Chat-Routen verwenden den Header `Authorization: Bearer <access-token>`:
 | GET | `/api/conversations` | Chats mit letzter Nachricht und ungelesener Anzahl abrufen |
 | POST | `/api/conversations/direct` | Direktchat mit einem bestätigten Kontakt öffnen |
 | GET/POST | `/api/conversations/:id/messages` | Nachrichtenverlauf abrufen oder Nachricht senden |
-| POST | `/api/conversations/:id/attachments` | Bild oder Datei bis 10 MB sicher in einer Unterhaltung teilen |
+| POST | `/api/conversations/:id/attachments` | Bild, Video oder Datei bis 10 MB sicher in einer Unterhaltung teilen |
 | GET | `/api/attachments/:id` | Anhang nur für aktuelle Gruppenmitglieder oder Chatteilnehmer laden |
 | POST | `/api/conversations/:id/read` | Nachrichten als gelesen markieren |
 | PATCH/DELETE | `/api/messages/:id` | Eigene Nachricht bearbeiten oder für mich/für alle löschen |
@@ -304,11 +304,19 @@ Chat-Routen verwenden den Header `Authorization: Bearer <access-token>`:
 | GET/PATCH | `/api/groups/:id` | Gruppenmitglieder ansehen oder (als Admin) den Namen ändern |
 | POST/PATCH/DELETE | `/api/groups/:id/members...` | Gruppenmitglieder hinzufügen, Admin-Rolle ändern, entfernen oder selbst verlassen |
 
+Anhänge können Bilder (JPEG, PNG, GIF, WebP), Videos (MP4, WebM, MOV), PDF- und Textdateien bis 10 MB enthalten.
+
+Server sind von privaten Unterhaltungen getrennt. `GET/POST /api/servers` listet oder erstellt Server; beim Erstellen entstehen ein Owner, ein Standard-Serverkanal und ein permanenter Einladungslink. `GET /api/servers/:id` liefert Server und Kanäle. Kanäle werden mit `GET/POST /api/servers/:id/channels` verwaltet. Servermitglieder können `POST /api/servers/:id/leave` verwenden; Owner können ihren Server mit `DELETE /api/servers/:id` löschen.
+
+`GET /api/servers/invites/:code` zeigt eine öffentliche Einladungsvorschau; `POST /api/servers/invites/:code/join` tritt nach Anmeldung bei. Owner und entsprechend berechtigte Rollen können den aktiven Link mit `GET/POST/DELETE /api/servers/:id/invite` ansehen, erstellen/zurücksetzen oder widerrufen. Beim Erstellen sind optional Ablaufzeiten von 1, 24, 168 oder 720 Stunden und ein Nutzungslimit möglich.
+
+Serverrollen unter `GET/POST /api/servers/:id/roles` und `PATCH/DELETE /api/servers/:id/roles/:roleId` sind ausschließlich Serverrollen. Mitgliederrollen lassen sich mit `PATCH /api/servers/:id/members/:userId/role` zuweisen; Mitgliederlisten und Moderationsaktionen liegen unter `/api/servers/:id/members`. Eingebaute Rollen sind Owner, Admin und Member; eigene Rollen steuern Server-, Kanal-, Einladungs-, Mitglieder- sowie Lese-/Schreibberechtigungen. Private Gruppen behalten unabhängig davon nur Admin und Member.
+
 Der lokale Express-Server verwendet Socket.IO. Die Cloudflare-Variante verwendet authentifizierte native WebSockets über Durable Objects und transportiert dieselben UI-Ereignisse: `message:new`, `message:updated`, `message:deleted`, `message:reaction`, `conversation:read`, `typing:update`, `presence:update`, `friendship:update` und `conversation:created`. Nachrichteninhalte und Reaktionen werden über die REST-API gespeichert und anschließend in Echtzeit verteilt.
 
 ## Datenbank
 
-Das lokale Express-Schema liegt in [`server/db/schema.sql`](server/db/schema.sql); die D1-Migration liegt unter `cloudflare/migrations/0001_schema.sql`. Beide enthalten Nutzer, Freundschaften, Blocks, Direkt- und Gruppenkonversationen, Mitgliedschaften, Nachrichten, private Dateianhänge, Emoji-Reaktionen, persönliche Nachrichtenlöschungen, Sessions sowie Verifizierungs- und Passwort-Reset-Tokens samt Fremdschlüsseln und Indizes. Lokal liegen Upload-Dateien in `data/uploads`; in Cloudflare liegen sie privat in R2.
+Das lokale Express-Schema liegt in [`server/db/schema.sql`](server/db/schema.sql); `server/src/db.js` ergänzt additive Bestandsmigrationen und die Server-/Kanal-/Gerätetabellen. Turso-Synchronisierung und Initialisierung liegen in `server/src/turso-sync.js` und `server/src/turso-init.js`. Serverrollen und Einladungslinks werden separat von privaten Gruppenmitgliedschaften gespeichert. Lokal liegen Upload-Dateien in `data/uploads`.
 
 ## Sicherheits- und Betriebsgrenzen
 

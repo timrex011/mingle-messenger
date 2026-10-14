@@ -12,6 +12,9 @@ const ATTACHMENT_TYPES = new Map([
   ['image/png', { extension: '.png', signature: (buffer) => buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) }],
   ['image/gif', { extension: '.gif', signature: (buffer) => ['GIF87a', 'GIF89a'].includes(buffer.toString('ascii', 0, 6)) }],
   ['image/webp', { extension: '.webp', signature: (buffer) => buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP' }],
+  ['video/mp4', { extension: '.mp4', signature: (buffer) => buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp' }],
+  ['video/quicktime', { extension: '.mov', signature: (buffer) => buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp' }],
+  ['video/webm', { extension: '.webm', signature: (buffer) => buffer.length >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) }],
   ['application/pdf', { extension: '.pdf', signature: (buffer) => buffer.toString('ascii', 0, 5) === '%PDF-' }],
   ['text/plain', { extension: '.txt', signature: (buffer) => !buffer.includes(0) }]
 ]);
@@ -61,10 +64,32 @@ function createChatRouter({ db, requireAuth, realtime }) {
     `).get(conversationId, userId));
   }
 
-  function conversationAvailable(conversationId, userId) {
+  function isPrivateGroup(conversationId) {
+    return Boolean(db.prepare(`
+      SELECT 1 FROM conversations c
+      WHERE c.id = ? AND c.type = 'group'
+        AND NOT EXISTS (SELECT 1 FROM channels ch WHERE ch.id = c.id)
+    `).get(conversationId));
+  }
+
+  function conversationAvailable(conversationId, userId, permission = 'read_messages') {
     if (!isConversationMember(conversationId, userId)) return false;
     const conversation = db.prepare('SELECT type FROM conversations WHERE id = ?').get(conversationId);
     if (!conversation) return false;
+    const serverChannel = db.prepare(`
+      SELECT sr.permissions
+      FROM channels c
+      JOIN server_members sm ON sm.server_id = c.server_id AND sm.user_id = ?
+      LEFT JOIN server_roles sr ON sr.id = sm.role_id
+      WHERE c.id = ?
+    `).get(userId, conversationId);
+    if (serverChannel) {
+      if (!serverChannel.permissions) return false;
+      const permissions = JSON.parse(serverChannel.permissions);
+      if (permissions.read_messages !== true || permission === 'send_messages' && permissions.send_messages !== true) {
+        return false;
+      }
+    }
     if (conversation.type === 'direct') {
       const peer = getPeerForConversation(conversationId, userId);
       if (!peer || isBlocked(userId, peer.id)) return false;
@@ -392,6 +417,7 @@ function createChatRouter({ db, requireAuth, realtime }) {
         ON c.type = 'direct' AND peer_member.conversation_id = c.id AND peer_member.user_id <> ?
       LEFT JOIN users peer ON peer.id = peer_member.user_id
       WHERE mine.user_id = ?
+        AND NOT EXISTS (SELECT 1 FROM channels server_channel WHERE server_channel.id = c.id)
         AND (
           c.type = 'group'
           OR (
@@ -487,6 +513,10 @@ function createChatRouter({ db, requireAuth, realtime }) {
   });
 
   router.get('/groups/:id', (req, res) => {
+    if (!isPrivateGroup(req.params.id)) {
+      res.status(404).json({ error: 'Gruppe nicht gefunden.' });
+      return;
+    }
     const group = db.prepare(`
       SELECT c.id, c.name, own.role AS my_role
       FROM conversations c
@@ -521,6 +551,10 @@ function createChatRouter({ db, requireAuth, realtime }) {
   });
 
   router.patch('/groups/:id', (req, res) => {
+    if (!isPrivateGroup(req.params.id)) {
+      res.status(404).json({ error: 'Gruppe nicht gefunden.' });
+      return;
+    }
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     if (name.length < 2 || name.length > 60) {
       res.status(400).json({ error: 'Der Gruppenname muss 2 bis 60 Zeichen lang sein.' });
@@ -541,6 +575,10 @@ function createChatRouter({ db, requireAuth, realtime }) {
   });
 
   router.post('/groups/:id/members', (req, res) => {
+    if (!isPrivateGroup(req.params.id)) {
+      res.status(404).json({ error: 'Gruppe nicht gefunden.' });
+      return;
+    }
     const isAdmin = db.prepare(`
       SELECT 1 FROM conversation_members cm
       JOIN conversations c ON c.id = cm.conversation_id
@@ -580,6 +618,10 @@ function createChatRouter({ db, requireAuth, realtime }) {
   });
 
   router.patch('/groups/:id/members/:userId', (req, res) => {
+    if (!isPrivateGroup(req.params.id)) {
+      res.status(404).json({ error: 'Gruppe nicht gefunden.' });
+      return;
+    }
     const isAdmin = db.prepare(`
       SELECT 1 FROM conversation_members cm
       JOIN conversations c ON c.id = cm.conversation_id
@@ -617,6 +659,10 @@ function createChatRouter({ db, requireAuth, realtime }) {
   });
 
   router.delete('/groups/:id/members/:userId', (req, res) => {
+    if (!isPrivateGroup(req.params.id)) {
+      res.status(404).json({ error: 'Gruppe nicht gefunden.' });
+      return;
+    }
     const isMember = isConversationMember(req.params.id, req.auth.sub);
     if (!isMember) {
       res.status(404).json({ error: 'Gruppe nicht gefunden.' });
@@ -695,7 +741,7 @@ function createChatRouter({ db, requireAuth, realtime }) {
   });
 
   router.post('/conversations/:id/attachments', (req, res, next) => {
-    if (!conversationAvailable(req.params.id, req.auth.sub)) {
+    if (!conversationAvailable(req.params.id, req.auth.sub, 'send_messages')) {
       res.status(404).json({ error: 'Unterhaltung nicht gefunden oder nicht verfügbar.' });
       return;
     }
@@ -820,7 +866,7 @@ function createChatRouter({ db, requireAuth, realtime }) {
       res.status(400).json({ error: 'Eine Nachricht muss zwischen 1 und 4000 Zeichen lang sein.' });
       return;
     }
-    if (!conversationAvailable(conversationId, req.auth.sub)) {
+    if (!conversationAvailable(conversationId, req.auth.sub, 'send_messages')) {
       res.status(404).json({ error: 'Unterhaltung nicht gefunden oder nicht verfügbar.' });
       return;
     }

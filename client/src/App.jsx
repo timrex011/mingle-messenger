@@ -7,10 +7,16 @@ import {
   Check,
   CheckCheck,
   ChevronDown,
+  ChevronRight,
   CircleHelp,
+  Compass,
+  Copy,
+  Crown,
   Download,
   FileText,
+  Hash,
   LockKeyhole,
+  Link2,
   LogOut,
   Menu,
   MessageCircle,
@@ -23,14 +29,17 @@ import {
   Paperclip,
   Phone,
   PhoneOff,
+  Plus,
   Search,
   Send,
   Settings,
+  Settings2,
   ShieldCheck,
   SmilePlus,
   Sun,
   Trash2,
   UserRound,
+  UserRoundCog,
   UserPlus,
   UserX,
   UsersRound,
@@ -60,18 +69,30 @@ function Avatar({ name = '?', online = false, size = 'normal' }) {
   );
 }
 
+const SERVER_PERMISSION_LABELS = [
+  ['read_messages', 'Kanäle ansehen'],
+  ['send_messages', 'Nachrichten senden'],
+  ['manage_channels', 'Kanäle verwalten'],
+  ['manage_roles', 'Rollen verwalten'],
+  ['manage_invites', 'Einladungen verwalten'],
+  ['kick_members', 'Mitglieder entfernen'],
+  ['manage_server', 'Server verwalten']
+];
+
 function MessageAttachment({ attachment, token, onToken }) {
   const [url, setUrl] = useState('');
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const attachmentRef = useRef(null);
   const isImage = attachment.mimeType.startsWith('image/');
+  const isVideo = attachment.mimeType.startsWith('video/');
+  const isPreviewable = isImage || isVideo;
   const sizeLabel = attachment.size < 1024 * 1024
     ? `${Math.max(1, Math.round(attachment.size / 1024))} KB`
     : `${(attachment.size / (1024 * 1024)).toFixed(1)} MB`;
 
   useEffect(() => {
-    if (!isImage) return undefined;
+    if (!isPreviewable) return undefined;
     let active = true;
     let objectUrl = '';
     let requested = false;
@@ -109,16 +130,21 @@ function MessageAttachment({ attachment, token, onToken }) {
       observer.disconnect();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [attachment.id, attachment.url, isImage, token, onToken]);
+  }, [attachment.id, attachment.url, isPreviewable, token, onToken]);
 
-  if (isImage) {
+  if (isPreviewable) {
     if (loadError) return <p className="attachment-error">{loadError}</p>;
-    return <a className="attachment-image-link" href={url} target="_blank" rel="noreferrer">
-      <span className="attachment-image-preview" ref={attachmentRef}>
-        {url ? <img className="attachment-image" src={url} alt={attachment.name} /> : <span>{loading ? 'Bild wird geladen …' : 'Bildvorschau'}</span>}
-      </span>
-      <span>{attachment.name} <small>{sizeLabel}</small></span>
-    </a>;
+    const preview = <span className="attachment-image-preview" ref={attachmentRef}>
+      {url
+        ? isImage
+          ? <img className="attachment-image" src={url} alt={attachment.name} />
+          : <video className="attachment-video" src={url} controls preload="metadata" aria-label={attachment.name} />
+        : <span>{loading ? (isVideo ? 'Video wird geladen …' : 'Bild wird geladen …') : (isVideo ? 'Videovorschau' : 'Bildvorschau')}</span>}
+    </span>;
+    const details = <span>{attachment.name} <small>{sizeLabel}</small></span>;
+    return isImage
+      ? <a className="attachment-image-link" href={url} target="_blank" rel="noreferrer">{preview}{details}</a>
+      : <div className="attachment-image-link">{preview}{details}</div>;
   }
   async function downloadAttachment() {
     setLoading(true);
@@ -929,9 +955,31 @@ function MessageBubble({ message, mine, token, onToken, onReply, onEdit, onDelet
   );
 }
 
-function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, onThemeToggle }) {
+function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, onThemeToggle, onOpenInvite, initialServerId, onInitialServerSelected }) {
   const [section, setSection] = useState('chats');
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [servers, setServers] = useState([]);
+  const [activeServerId, setActiveServerId] = useState(null);
+  const [serverDetail, setServerDetail] = useState(null);
+  const [serverMembers, setServerMembers] = useState([]);
+  const [serverRoles, setServerRoles] = useState([]);
+  const [serverInvite, setServerInvite] = useState(null);
+  const [activeChannelId, setActiveChannelId] = useState(null);
+  const [serverMembersOpen, setServerMembersOpen] = useState(true);
+  const [serverAdminOpen, setServerAdminOpen] = useState(false);
+  const [serverAdminTab, setServerAdminTab] = useState('members');
+  const [createServerOpen, setCreateServerOpen] = useState(false);
+  const [createServerName, setCreateServerName] = useState('');
+  const [createServerIcon, setCreateServerIcon] = useState('');
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [createChannelName, setCreateChannelName] = useState('');
+  const [roleDraft, setRoleDraft] = useState(null);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleColor, setNewRoleColor] = useState('#818cf8');
+  const [newRolePermissions, setNewRolePermissions] = useState({ read_messages: true, send_messages: true });
+  const [inviteExpiry, setInviteExpiry] = useState('');
+  const [inviteMaxUses, setInviteMaxUses] = useState('');
+  const [copiedInvite, setCopiedInvite] = useState(false);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState([]);
   const [friendships, setFriendships] = useState({ incoming: [], outgoing: [], accepted: [] });
@@ -975,6 +1023,8 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const typingTimer = useRef(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const activeServerIdRef = useRef(null);
+  const activeChannelIdRef = useRef(null);
 
   const refreshLists = useCallback(async () => {
     const [conversationResult, friendshipResult, blockResult] = await Promise.all([
@@ -988,9 +1038,69 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     return conversationResult.conversations;
   }, [token, onToken]);
 
+  const refreshServers = useCallback(async () => {
+    const result = await request('/servers', { token, onToken });
+    setServers(result.servers || []);
+    return result.servers || [];
+  }, [token, onToken]);
+
   useEffect(() => {
     refreshLists().catch((requestError) => setError(requestError.message));
   }, [refreshLists]);
+
+  useEffect(() => {
+    refreshServers().catch((requestError) => setError(requestError.message));
+  }, [refreshServers]);
+
+  useEffect(() => {
+    if (initialServerId) {
+      selectServer({ id: initialServerId });
+      onInitialServerSelected?.();
+    }
+  }, [initialServerId]);
+
+  useEffect(() => {
+    activeServerIdRef.current = activeServerId;
+    if (!activeServerId) {
+      setServerDetail(null);
+      setServerMembers([]);
+      setServerRoles([]);
+      setServerInvite(null);
+      return undefined;
+    }
+    let current = true;
+    setServerDetail(null);
+    setServerMembers([]);
+    setServerRoles([]);
+    setServerInvite(null);
+    Promise.all([
+      request(`/servers/${activeServerId}`, { token, onToken }),
+      request(`/servers/${activeServerId}/members`, { token, onToken })
+    ]).then(async ([detailResult, memberResult]) => {
+      if (!current || activeServerIdRef.current !== activeServerId) return;
+      setServerDetail(detailResult);
+      setServerMembers(memberResult.members || []);
+      if (!activeChannelIdRef.current && detailResult.channels?.length) {
+        selectServerChannel(detailResult.channels[0], activeServerId);
+      }
+      const permissions = detailResult.server?.myPermissions || {};
+      const extras = await Promise.all([
+        permissions.manage_roles
+          ? request(`/servers/${activeServerId}/roles`, { token, onToken })
+          : Promise.resolve({ roles: [] }),
+        permissions.manage_invites
+          ? request(`/servers/${activeServerId}/invite`, { token, onToken })
+          : Promise.resolve({ invite: null })
+      ]);
+      if (current && activeServerIdRef.current === activeServerId) {
+        setServerRoles(extras[0].roles || []);
+        setServerInvite(extras[1].invite || null);
+      }
+    }).catch((requestError) => {
+      if (current) setError(requestError.message);
+    });
+    return () => { current = false; };
+  }, [activeServerId, token, onToken]);
 
   useEffect(() => {
     const socket = io({ path: '/socket.io', auth: { token } });
@@ -1025,6 +1135,33 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     });
     socket.on('friendship:update', () => {
       refreshLists().catch((requestError) => setError(requestError.message));
+    });
+    socket.on('server:joined', () => {
+      refreshServers().catch((requestError) => setError(requestError.message));
+    });
+    socket.on('server:role-updated', ({ serverId }) => {
+      refreshServers().catch((requestError) => setError(requestError.message));
+      if (activeServerIdRef.current === serverId) {
+        request(`/servers/${serverId}`, { token, onToken })
+          .then((result) => setServerDetail(result))
+          .catch((requestError) => setError(requestError.message));
+        request(`/servers/${serverId}/members`, { token, onToken })
+          .then((result) => setServerMembers(result.members || []))
+          .catch((requestError) => setError(requestError.message));
+      }
+    });
+    socket.on('server:removed', ({ serverId }) => {
+      if (activeServerIdRef.current === serverId) {
+        setActiveServerId(null);
+        activeServerIdRef.current = null;
+        setActiveChannelId(null);
+        activeChannelIdRef.current = null;
+        selectedIdRef.current = null;
+        setSelectedId(null);
+        setMessages([]);
+        setInfo('Du bist nicht mehr Mitglied dieses Servers.');
+      }
+      refreshServers().catch((requestError) => setError(requestError.message));
     });
     socket.on('conversation:created', () => {
       refreshLists().catch((requestError) => setError(requestError.message));
@@ -1246,6 +1383,19 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     return pc;
   }
 
+  function getMediaErrorMessage(err) {
+    if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+      return 'Mikrofon-/Kamerazugriff nicht erlaubt. Prüfe die App-Berechtigungen in Windows und erlaube den Zugriff im Browser.';
+    }
+    if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+      return 'Kein passendes Mikrofon oder keine Kamera gefunden. Bitte prüfe, ob ein Gerät angeschlossen ist.';
+    }
+    if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
+      return 'Mikrofon oder Kamera ist bereits in einer anderen App geöffnet.';
+    }
+    return 'Mikrofon-/Kamera konnte nicht gestartet werden. Prüfe die Geräteverbindung und Berechtigungen.';
+  }
+
   async function startCall(type = 'audio') {
     if (!selected?.peer) return;
     setCallType(type);
@@ -1277,7 +1427,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       });
     } catch (err) {
       console.error('Konnte Medien nicht öffnen:', err);
-      setError('Mikrofon-/Kamerazugriff wurde verweigert oder abgebrochen.');
+      setError(getMediaErrorMessage(err));
       cleanupCall();
     }
   }
@@ -1308,9 +1458,11 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       });
     } catch (err) {
       console.error('Konnte Anruf nicht annehmen:', err);
-      setError('Zugriff auf Audio/Video fehlgeschlagen.');
+      setError(getMediaErrorMessage(err));
       rejectCall();
+      cleanupCall();
     }
+
   }
 
   function rejectCall() {
@@ -1409,7 +1561,16 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     };
   }, [search, section, token, onToken]);
 
-  const selected = conversations.find((item) => item.id === selectedId) || null;
+  const activeChannel = activeServerId
+    ? serverDetail?.channels?.find((channel) => channel.id === activeChannelId) || null
+    : null;
+  const selected = activeServerId
+    ? activeChannel
+      ? { ...activeChannel, id: activeChannel.id, name: `#${activeChannel.name}`, type: 'server-channel', serverId: activeServerId }
+      : null
+    : conversations.find((item) => item.id === selectedId) || null;
+  const activeServer = servers.find((server) => server.id === activeServerId) || serverDetail?.server || null;
+  const serverPermissions = serverDetail?.server?.myPermissions || {};
   const conversationQuery = search.trim().toLocaleLowerCase();
   const visibleConversations = conversations.filter((item) => !conversationQuery
     || (item.name || '').toLocaleLowerCase().includes(conversationQuery)
@@ -1428,6 +1589,10 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   }, []);
 
   async function selectConversation(conversation) {
+    setActiveServerId(null);
+    activeServerIdRef.current = null;
+    setActiveChannelId(null);
+    activeChannelIdRef.current = null;
     setSelectedId(conversation.id);
     selectedIdRef.current = conversation.id;
     setSection('chats');
@@ -1441,6 +1606,239 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       setMessages(result.messages);
       await request(`/conversations/${conversation.id}/read`, { method: 'POST', token, onToken });
       setConversations((current) => current.map((item) => item.id === conversation.id ? { ...item, unreadCount: 0 } : item));
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  function selectServer(server) {
+    setActiveServerId(server.id);
+    activeServerIdRef.current = server.id;
+    setActiveChannelId(null);
+    activeChannelIdRef.current = null;
+    setSelectedId(null);
+    selectedIdRef.current = null;
+    setMessages([]);
+    setGroupDetailsOpen(false);
+    setSection('chats');
+    setMobileMenu(false);
+  }
+
+  async function selectServerChannel(channel, serverId = activeServerId) {
+    if (!channel?.id || !serverId) return;
+    setActiveServerId(serverId);
+    activeServerIdRef.current = serverId;
+    setActiveChannelId(channel.id);
+    activeChannelIdRef.current = channel.id;
+    setSelectedId(channel.id);
+    selectedIdRef.current = channel.id;
+    setSection('chats');
+    setMobileMenu(false);
+    setMessages([]);
+    setTyping(null);
+    setError('');
+    try {
+      const result = await request(`/conversations/${channel.id}/messages`, { token, onToken });
+      if (selectedIdRef.current !== channel.id || activeServerIdRef.current !== serverId) return;
+      setMessages(result.messages || []);
+      await request(`/conversations/${channel.id}/read`, { method: 'POST', token, onToken });
+    } catch (requestError) {
+      if (selectedIdRef.current === channel.id) setError(requestError.message);
+    }
+  }
+
+  async function createServer(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const iconUrl = createServerIcon.trim() ? `emoji:${createServerIcon.trim()}` : undefined;
+      const result = await request('/servers', {
+        method: 'POST',
+        token,
+        onToken,
+        body: { name: createServerName.trim(), ...(iconUrl ? { iconUrl } : {}) }
+      });
+      await refreshServers();
+      setCreateServerOpen(false);
+      setCreateServerName('');
+      setCreateServerIcon('');
+      setActiveChannelId(null);
+      activeChannelIdRef.current = null;
+      selectServer({ id: result.id });
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createServerChannel(event) {
+    event.preventDefault();
+    if (!activeServerId) return;
+    setBusy(true);
+    try {
+      const channel = await request(`/servers/${activeServerId}/channels`, {
+        method: 'POST',
+        token,
+        onToken,
+        body: { name: createChannelName.trim() }
+      });
+      const detailResult = await request(`/servers/${activeServerId}`, { token, onToken });
+      setServerDetail(detailResult);
+      setCreateChannelOpen(false);
+      setCreateChannelName('');
+      const createdChannel = detailResult.channels?.find((item) => item.id === channel.id) || channel;
+      await selectServerChannel(createdChannel, activeServerId);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reloadServerManagement() {
+    if (!activeServerId) return;
+    try {
+      const memberResult = await request(`/servers/${activeServerId}/members`, { token, onToken });
+      const [roleResult, inviteResult] = await Promise.all([
+        serverPermissions.manage_roles
+          ? request(`/servers/${activeServerId}/roles`, { token, onToken })
+          : Promise.resolve({ roles: serverRoles }),
+        serverPermissions.manage_invites
+          ? request(`/servers/${activeServerId}/invite`, { token, onToken })
+          : Promise.resolve({ invite: serverInvite })
+      ]);
+      setServerMembers(memberResult.members || []);
+      setServerRoles(roleResult.roles || []);
+      setServerInvite(inviteResult.invite || null);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function changeServerMemberRole(memberId, roleId) {
+    try {
+      await request(`/servers/${activeServerId}/members/${memberId}/role`, {
+        method: 'PATCH', token, onToken, body: { roleId }
+      });
+      await reloadServerManagement();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function removeServerMember(member) {
+    if (!window.confirm(`@${member.username} aus diesem Server entfernen?`)) return;
+    try {
+      await request(`/servers/${activeServerId}/members/${member.id}`, { method: 'DELETE', token, onToken });
+      await reloadServerManagement();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function leaveServer() {
+    if (!activeServerId || !window.confirm(`"${activeServer?.name}" wirklich verlassen?`)) return;
+    try {
+      await request(`/servers/${activeServerId}/leave`, { method: 'POST', token, onToken });
+      setActiveServerId(null);
+      activeServerIdRef.current = null;
+      setActiveChannelId(null);
+      activeChannelIdRef.current = null;
+      setSelectedId(null);
+      selectedIdRef.current = null;
+      setMessages([]);
+      setServerAdminOpen(false);
+      await refreshServers();
+      setInfo('Du hast den Server verlassen.');
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function createServerInvite() {
+    try {
+      const result = await request(`/servers/${activeServerId}/invite`, {
+        method: 'POST',
+        token,
+        onToken,
+        body: {
+          expiresInHours: inviteExpiry ? Number(inviteExpiry) : null,
+          maxUses: inviteMaxUses ? Number(inviteMaxUses) : null
+        }
+      });
+      setServerInvite(result.invite);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function revokeServerInvite() {
+    if (!window.confirm('Diesen Einladungslink ungültig machen?')) return;
+    try {
+      await request(`/servers/${activeServerId}/invite`, { method: 'DELETE', token, onToken });
+      setServerInvite(null);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function copyServerInvite() {
+    if (!serverInvite?.url) return;
+    const inviteUrl = /^https?:\/\//.test(serverInvite.url)
+      ? serverInvite.url
+      : `${window.location.origin}${serverInvite.url}`;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopiedInvite(true);
+      window.setTimeout(() => setCopiedInvite(false), 1800);
+    } catch {
+      setError('Der Einladungslink konnte nicht kopiert werden.');
+    }
+  }
+
+  async function saveServerRole(event) {
+    event.preventDefault();
+    if (!activeServerId || !roleDraft) return;
+    try {
+      const result = await request(`/servers/${activeServerId}/roles/${roleDraft.id}`, {
+        method: 'PATCH',
+        token,
+        onToken,
+        body: { name: roleDraft.name, color: roleDraft.color, permissions: roleDraft.permissions }
+      });
+      setServerRoles((current) => current.map((role) => role.id === result.role.id ? result.role : role));
+      setRoleDraft(null);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function createServerRole(event) {
+    event.preventDefault();
+    try {
+      const result = await request(`/servers/${activeServerId}/roles`, {
+        method: 'POST',
+        token,
+        onToken,
+        body: { name: newRoleName.trim(), color: newRoleColor, permissions: newRolePermissions }
+      });
+      setServerRoles((current) => [...current, result.role]);
+      setNewRoleName('');
+      setNewRolePermissions({ read_messages: true, send_messages: true });
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function deleteServerRole(role) {
+    if (!window.confirm(`Rolle "${role.name}" löschen?`)) return;
+    try {
+      await request(`/servers/${activeServerId}/roles/${role.id}`, { method: 'DELETE', token, onToken });
+      setServerRoles((current) => current.filter((item) => item.id !== role.id));
+      if (roleDraft?.id === role.id) setRoleDraft(null);
+      await reloadServerManagement();
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -1705,7 +2103,11 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   function chooseAttachment(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'text/plain']);
+    const allowedTypes = new Set([
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'video/mp4', 'video/webm', 'video/quicktime',
+      'application/pdf', 'text/plain'
+    ]);
     if (!allowedTypes.has(file.type)) {
       setError('Erlaubt sind JPG, PNG, GIF, WebP, PDF und Textdateien.');
       event.target.value = '';
@@ -1789,20 +2191,63 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const settingsVisible = section === 'settings';
 
   return (
-    <main className={`workspace ${theme}`}>
+    <main className={`workspace ${theme} ${activeServerId ? 'server-workspace' : ''}`}>
+      <nav className="server-rail" aria-label="Server navigation">
+        <button className={`rail-home ${!activeServerId ? 'rail-selected' : ''}`} title="Direktnachrichten" aria-label="Direktnachrichten" onClick={() => {
+          setActiveServerId(null); activeServerIdRef.current = null; setActiveChannelId(null); activeChannelIdRef.current = null; setSelectedId(null); selectedIdRef.current = null; setMessages([]); setSection('chats');
+        }}>
+          <img src="/favicon.svg" alt="" />
+        </button>
+        <span className="rail-divider" />
+        <div className="rail-server-list">
+          {servers.map((server) => {
+            const serverIcon = server.icon_url || server.iconUrl || '';
+            return <button key={server.id} className={`rail-server ${activeServerId === server.id ? 'rail-selected' : ''}`} title={server.name} aria-label={`${server.name} server`} onClick={() => selectServer(server)}>
+              {serverIcon.startsWith('emoji:') ? serverIcon.slice(6) : serverIcon ? <img src={serverIcon} alt="" /> : (server.name || '?').trim().slice(0, 2).toUpperCase()}
+              {activeServerId === server.id && <i />}
+            </button>;
+          })}
+        </div>
+        <button className="rail-add" title="Server erstellen" aria-label="Server erstellen" onClick={() => setCreateServerOpen(true)}><Plus size={20} /></button>
+        <button className="rail-discover" title="Einladungslink öffnen" aria-label="Einladungslink öffnen" onClick={() => {
+          const value = window.prompt('Einladungscode oder Link eingeben');
+          if (value) {
+            const match = value.trim().match(/(?:\/invite\/)?([A-Za-z0-9_-]{6,})\/?$/);
+            if (match) onOpenInvite(match[1]);
+            else setError('Der Einladungslink sieht nicht gültig aus.');
+          }
+        }}><Compass size={18} /></button>
+      </nav>
       <aside className={`sidebar ${mobileMenu ? 'sidebar-open' : ''}`}>
         <div className="sidebar-top">
-          <Brand />
+          {activeServer ? <div className="sidebar-server-title"><span>{(activeServer.icon_url || activeServer.iconUrl || '').startsWith('emoji:')
+            ? (activeServer.icon_url || activeServer.iconUrl).slice(6)
+            : (activeServer.icon_url || activeServer.iconUrl)
+              ? <img src={activeServer.icon_url || activeServer.iconUrl} alt="" />
+              : (activeServer.name || 'S').slice(0, 1).toUpperCase()}</span><b>{activeServer.name}</b></div> : <Brand />}
           <button className="icon-button mobile-menu-close" aria-label="Menü schließen" onClick={() => setMobileMenu(false)}><X size={19} /></button>
           <button className="icon-button more-button" aria-label="Abmelden" title="Abmelden" onClick={onLogout}><LogOut size={17} /></button>
         </div>
-        <div className="sidebar-greeting"><span>DEIN MESSENGER</span><h1>Hallo, {user.username} <span className="wave">✦</span></h1><p>{friendships.incoming.length ? `${friendships.incoming.length} neue Anfrage${friendships.incoming.length === 1 ? '' : 'n'}` : 'Was gibt’s Neues?'}</p></div>
+        {!activeServer && <div className="sidebar-greeting"><span>DEIN MESSENGER</span><h1>Hallo, {user.username} <span className="wave">✦</span></h1><p>{friendships.incoming.length ? `${friendships.incoming.length} neue Anfrage${friendships.incoming.length === 1 ? '' : 'n'}` : 'Was gibt’s Neues?'}</p></div>}
         <div className="sidebar-tabs">
-          <button className={section === 'chats' ? 'active' : ''} onClick={() => { setSection('chats'); setMobileMenu(false); }}><MessageCircle size={16} /> Chats</button>
+          <button className={section === 'chats' && !activeServer ? 'active' : ''} onClick={() => { setActiveServerId(null); activeServerIdRef.current = null; setActiveChannelId(null); activeChannelIdRef.current = null; setSelectedId(null); selectedIdRef.current = null; setMessages([]); setSection('chats'); setMobileMenu(false); }}><MessageCircle size={16} /> Chats</button>
           <button className={section === 'contacts' ? 'active' : ''} onClick={() => { setSection('contacts'); setMobileMenu(false); }}><UsersRound size={16} /> Kontakte{friendships.incoming.length > 0 && <i className="tab-count">{friendships.incoming.length}</i>}</button>
           <button className={settingsVisible ? 'active' : ''} onClick={() => { setSection('settings'); setMobileMenu(false); }}><Settings size={16} /> Konto</button>
         </div>
-        {section === 'chats' && (
+        {section === 'chats' && activeServerId && (
+          <section className="server-channel-sidebar">
+            <div className="server-sidebar-actions">
+              <button onClick={() => { setServerAdminTab('invites'); setServerAdminOpen(true); }} disabled={!serverPermissions.manage_invites}><UserPlus size={15} /> Einladung</button>
+              <button onClick={() => { setServerAdminTab('members'); setServerAdminOpen(true); }} disabled={!serverPermissions.manage_roles && !serverPermissions.manage_server && !serverPermissions.kick_members}><Settings2 size={15} /> Verwalten</button>
+            </div>
+            <div className="server-channel-heading"><span>TEXTKANÄLE</span>{serverPermissions.manage_channels && <button className="icon-button" title="Kanal erstellen" aria-label="Kanal erstellen" onClick={() => setCreateChannelOpen(true)}><Plus size={16} /></button>}</div>
+            <div className="server-channel-list">
+              {!serverDetail ? <p className="server-loading">Kanäle werden geladen …</p> : serverDetail.channels?.length ? serverDetail.channels.map((channel) => <button key={channel.id} className={`server-channel-item ${activeChannelId === channel.id ? 'selected' : ''}`} onClick={() => selectServerChannel(channel)}><Hash size={16} /><span>{channel.name}</span></button>) : <p className="server-loading">Keine lesbaren Kanäle vorhanden.</p>}
+            </div>
+            <button className="server-leave-button" onClick={leaveServer} disabled={activeServer?.owner_id === user.id}>Server verlassen</button>
+          </section>
+        )}
+        {section === 'chats' && !activeServerId && (
           <>
             <label className="search-box"><Search size={16} /><input ref={chatSearchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Chats durchsuchen" /><kbd>Ctrl K</kbd></label>
             <div className="conversation-list">
@@ -1864,21 +2309,24 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       <section className="main-panel">
         <header className="topbar">
           <button className="icon-button mobile-menu-open" aria-label="Menü öffnen" onClick={() => setMobileMenu(true)}><Menu size={20} /></button>
-          <div className="topbar-context"><span className={`context-dot ${selected?.peer?.online ? '' : 'offline'}`} /><span>{settingsVisible ? 'Dein Konto' : selected ? selected.name : section === 'contacts' ? 'Kontakte' : 'Deine Nachrichten'}</span></div>
+          <div className="topbar-context"><span className={`context-dot ${selected?.peer?.online ? '' : 'offline'}`} /><span>{settingsVisible ? 'Dein Konto' : selected ? selected.name : section === 'contacts' ? 'Kontakte' : activeServer?.name || 'Deine Nachrichten'}</span></div>
           <div className="topbar-actions">
             {selected?.peer && <span className="presence-label">{typing ? 'schreibt gerade…' : selected.peer.online ? 'online' : 'offline'}</span>}
             <span className="secure-label"><ShieldCheck size={15} /> Sicher verbunden</span>
             {selected?.peer && <button className="icon-button block-button" title="Kontakt blockieren" aria-label="Kontakt blockieren" onClick={() => blockUser(selected.peer)}><Ban size={17} /></button>}
+            {selected?.type === 'server-channel' && <button className="icon-button server-member-toggle" title="Mitglieder anzeigen" aria-label="Mitglieder anzeigen" onClick={() => setServerMembersOpen((open) => !open)}><UsersRound size={17} /></button>}
             <button className="icon-button theme-toggle" onClick={onThemeToggle} title={theme === 'light' ? 'Dunkles Design' : 'Helles Design'} aria-label="Design wechseln">{theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}</button>
           </div>
         </header>
         {settingsVisible ? (
           <SettingsPage user={user} token={token} onUserChange={onUserChange} onToken={onToken} onLogout={onLogout} />
         ) : selected ? (
-          <section className="chat-room">
+          <section className={`chat-room ${selected.type === 'server-channel' ? 'server-chat-room' : ''}`}>
             <div className="chat-room-header">
               <Avatar name={selected.name || 'Gruppe'} online={selected.peer?.online} />
-              <div><h2>{selected.name}</h2><p>{typing ? `${typing} schreibt gerade…` : selected.peer?.online ? 'online' : selected.type === 'group' ? 'Gruppenunterhaltung' : 'zuletzt gesehen'}</p></div>
+              <div><h2>{selected.name}</h2><p>{selected.type === 'server-channel'
+                ? `${activeServer?.name || 'Server'} · ${activeServer?.member_count ?? activeServer?.memberCount ?? 0} Mitglieder`
+                : typing ? `${typing} schreibt gerade…` : selected.peer?.online ? 'online' : selected.type === 'group' ? 'Gruppenunterhaltung' : 'zuletzt gesehen'}</p></div>
               {selected.peer && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
                   <button className="call-action-btn" title="Sprachanruf starten" aria-label="Sprachanruf starten" onClick={() => startCall('audio')} disabled={callActive}>
@@ -1893,6 +2341,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
                 </div>
               )}
               {selected.type === 'group' && <button className="icon-button group-details-button" title="Gruppen verwalten" aria-label="Gruppen verwalten" onClick={openGroupDetails}><UsersRound size={17} /></button>}
+              {selected.type === 'server-channel' && serverPermissions.manage_roles && <button className="icon-button group-details-button" title="Server verwalten" aria-label="Server verwalten" onClick={() => { setServerAdminTab('members'); setServerAdminOpen(true); }}><Settings2 size={17} /></button>}
               {selected.peer && <button className="icon-button block-button mobile-block-button" title="Kontakt blockieren" aria-label="Kontakt blockieren" onClick={() => blockUser(selected.peer)}><Ban size={17} /></button>}
             </div>
             {/* ── Active WebRTC Call Overlay ── */}
@@ -1960,28 +2409,40 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
                 <button className="button button-danger group-leave-button" onClick={() => removeGroupMember(groupDetails.members.find((member) => member.id === user.id))}>Gruppe verlassen</button>
               </>}
             </aside>}
-            <div className="message-list">
-              {messages.length === 0 && <div className="conversation-start"><Avatar name={selected.name || 'Gruppe'} size="large" online={selected.peer?.online} /><h3>Das ist euer Anfang.</h3><p>Schick {selected.peer ? `@${selected.peer.username}` : 'der Gruppe'} die erste Nachricht.</p></div>}
-              {messages.map((message) => <MessageBubble
-                key={message.id}
-                message={message}
-                mine={message.senderId === user.id}
-                token={token}
-                onToken={onToken}
-                onReply={setReplyTo}
-                onEdit={editMessage}
-                onDelete={deleteMessage}
-                onReact={toggleReaction}
-              />)}
-              {typing && <div className="typing-indicator"><span /><span /><span /> {typing} schreibt</div>}
-              <div ref={messagesEndRef} />
+            <div className="conversation-body">
+              <div className="message-list">
+                {messages.length === 0 && <div className="conversation-start"><Avatar name={selected.name || 'Gruppe'} size="large" online={selected.peer?.online} /><h3>{selected.type === 'server-channel' ? `Willkommen in ${selected.name}` : 'Das ist euer Anfang.'}</h3><p>{selected.type === 'server-channel' ? (activeChannel?.topic || 'Dies ist der Anfang dieses Kanals.') : `Schick ${selected.peer ? `@${selected.peer.username}` : 'der Gruppe'} die erste Nachricht.`}</p></div>}
+                {messages.map((message) => <MessageBubble
+                  key={message.id}
+                  message={message}
+                  mine={message.senderId === user.id}
+                  token={token}
+                  onToken={onToken}
+                  onReply={setReplyTo}
+                  onEdit={editMessage}
+                  onDelete={deleteMessage}
+                  onReact={toggleReaction}
+                />)}
+                {typing && <div className="typing-indicator"><span /><span /><span /> {typing} schreibt</div>}
+                <div ref={messagesEndRef} />
+              </div>
+              {selected.type === 'server-channel' && serverMembersOpen && <aside className="server-member-pane">
+                <div className="server-member-heading"><span>MITGLIEDER</span><b>{serverMembers.length}</b></div>
+                {!serverMembers.length ? <p className="server-loading">Mitglieder werden geladen …</p> : serverMembers.map((member) => <div className="server-member-item" key={member.id}>
+                  <Avatar name={member.username} online={member.online} />
+                  <span><b>{member.username}{member.id === user.id ? ' (du)' : ''}</b><small style={{ color: member.color || undefined }}>{member.role_name || 'Mitglied'}</small></span>
+                  {member.role_name === 'Owner' && <Crown size={13} />}
+                </div>)}
+              </aside>}
             </div>
-            <form className="composer" onSubmit={sendMessage}>
+            {selected.type === 'server-channel' && !serverPermissions.send_messages
+              ? <div className="server-readonly-note"><LockKeyhole size={15} /> Du kannst diesen Kanal lesen, aber nicht schreiben.</div>
+              : <form className="composer" onSubmit={sendMessage}>
               {replyTo && <div className="replying-to"><span><b>Antwort an {replyTo.senderUsername || 'dich'}</b><small>{replyTo.body}</small></span><button type="button" aria-label="Antwort abbrechen" onClick={() => setReplyTo(null)}><X size={15} /></button></div>}
               {pendingFile && <div className="pending-attachment"><Paperclip size={14} /><span>{pendingFile.name}<small>{(pendingFile.size / (1024 * 1024)).toFixed(1)} MB</small></span><button type="button" aria-label="Dateianhang entfernen" onClick={() => { setPendingFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}><X size={15} /></button></div>}
               <div className="composer-row">
-                <input ref={fileInputRef} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain" onChange={chooseAttachment} />
-                <button className="icon-button attachment-button" type="button" title="Bild oder Datei anhängen" aria-label="Bild oder Datei anhängen" onClick={() => fileInputRef.current?.click()}><Paperclip size={18} /></button>
+                <input ref={fileInputRef} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,application/pdf,text/plain" onChange={chooseAttachment} />
+                <button className="icon-button attachment-button" type="button" title="Bild, Video oder Datei anhängen" aria-label="Bild, Video oder Datei anhängen" onClick={() => fileInputRef.current?.click()}><Paperclip size={18} /></button>
                 <textarea
                   value={draft}
                   onChange={(event) => updateDraft(event.target.value)}
@@ -1993,8 +2454,8 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
                 />
                 <button className="send-button" type="submit" disabled={(!draft.trim() && !pendingFile) || busy} aria-label="Nachricht senden"><Send size={18} /></button>
               </div>
-              <div className="composer-hint">Bilder und Dateien bis 10 MB <span>·</span> Enter zum Senden</div>
-            </form>
+              <div className="composer-hint">{selected.type === 'server-channel' ? `Schreibe in ${selected.name}` : 'Bilder und Dateien bis 10 MB'} <span>·</span> Enter zum Senden</div>
+              </form>}
           </section>
         ) : (
           <div className="welcome-panel">
@@ -2012,6 +2473,79 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
             <div className="welcome-note"><span><Check size={14} /> Ohne Telefonnummer</span><span><CheckCheck size={15} /> Deine Chats, deine Regeln</span></div>
           </div>
         )}
+        {createServerOpen && <div className="server-modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setCreateServerOpen(false); }}>
+          <section className="server-dialog" role="dialog" aria-modal="true" aria-labelledby="create-server-title">
+            <div className="server-dialog-heading"><div><span className="auth-kicker">DEIN EIGENER ORT</span><h2 id="create-server-title">Server erstellen</h2><p>Starte einen gemeinsamen Raum. Kanäle und Rollen kannst du später ergänzen.</p></div><button className="icon-button" aria-label="Schließen" onClick={() => setCreateServerOpen(false)}><X size={18} /></button></div>
+            <form className="server-form" onSubmit={createServer}>
+              <label className="field"><span>Servername</span><input className="plain-input" value={createServerName} onChange={(event) => setCreateServerName(event.target.value)} minLength="2" maxLength="50" placeholder="z. B. Studio Kollektiv" required autoFocus /></label>
+              <label className="field"><span>Emoji (optional)</span><input className="plain-input server-emoji-input" value={createServerIcon} onChange={(event) => setCreateServerIcon(event.target.value)} maxLength="8" placeholder="✦" /></label>
+              <button className="button button-primary" disabled={busy}>{busy ? 'Wird erstellt …' : 'Server erstellen'} <ArrowRight size={16} /></button>
+            </form>
+          </section>
+        </div>}
+        {createChannelOpen && <div className="server-modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setCreateChannelOpen(false); }}>
+          <section className="server-dialog server-channel-dialog" role="dialog" aria-modal="true" aria-labelledby="create-channel-title">
+            <div className="server-dialog-heading"><div><span className="auth-kicker">KANAL ERSTELLEN</span><h2 id="create-channel-title">Ein neuer Gesprächsraum</h2><p>Nutze einen kurzen Namen ohne Leerzeichen.</p></div><button className="icon-button" aria-label="Schließen" onClick={() => setCreateChannelOpen(false)}><X size={18} /></button></div>
+            <form className="server-form" onSubmit={createServerChannel}>
+              <label className="field"><span>Kanalname</span><div className="server-channel-name-input"><Hash size={17} /><input className="plain-input" value={createChannelName} onChange={(event) => setCreateChannelName(event.target.value)} minLength="2" maxLength="40" placeholder="projektideen" required autoFocus /></div></label>
+              <button className="button button-primary" disabled={busy}>{busy ? 'Wird erstellt …' : 'Kanal erstellen'} <Plus size={16} /></button>
+            </form>
+          </section>
+        </div>}
+        {serverAdminOpen && activeServer && <div className="server-modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setServerAdminOpen(false); }}>
+          <section className="server-dialog server-admin-dialog" role="dialog" aria-modal="true" aria-labelledby="server-admin-title">
+            <div className="server-dialog-heading"><div><span className="auth-kicker">SERVER EINSTELLUNGEN</span><h2 id="server-admin-title">{activeServer.name}</h2><p>Mitglieder, Rollen und Einladungen an einem Ort.</p></div><button className="icon-button" aria-label="Schließen" onClick={() => setServerAdminOpen(false)}><X size={18} /></button></div>
+            <nav className="server-admin-tabs" aria-label="Serververwaltung">
+              {(serverPermissions.manage_roles || serverPermissions.kick_members || serverPermissions.manage_server) && <button className={serverAdminTab === 'members' ? 'active' : ''} onClick={() => setServerAdminTab('members')}><UsersRound size={15} /> Mitglieder</button>}
+              {serverPermissions.manage_roles && <button className={serverAdminTab === 'roles' ? 'active' : ''} onClick={() => setServerAdminTab('roles')}><ShieldCheck size={15} /> Rollen</button>}
+              {serverPermissions.manage_invites && <button className={serverAdminTab === 'invites' ? 'active' : ''} onClick={() => setServerAdminTab('invites')}><UserPlus size={15} /> Einladungen</button>}
+            </nav>
+            {serverAdminTab === 'members' && <div className="server-admin-content">
+              <div className="server-admin-section-title"><div><b>Servermitglieder</b><small>Rollen gelten nur für diesen Server.</small></div><span>{serverMembers.length}</span></div>
+              {serverMembers.map((member) => <div className="server-admin-member" key={member.id}>
+                <Avatar name={member.username} online={member.online} />
+                <span className="server-admin-member-name"><b>{member.username}{member.id === user.id ? ' (du)' : ''}</b><small>{member.role_name || 'Mitglied'}</small></span>
+                {member.id !== user.id && member.role_name !== 'Owner' && serverPermissions.manage_roles && <select className="server-role-select" aria-label={`Rolle für ${member.username}`} value={member.role_id || ''} onChange={(event) => changeServerMemberRole(member.id, event.target.value)}>
+                  {serverRoles.filter((role) => role.name !== 'Owner').map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                </select>}
+                {member.id !== user.id && serverPermissions.kick_members && member.role_name !== 'Owner' && <button className="icon-button server-remove-member" title="Mitglied entfernen" aria-label={`${member.username} entfernen`} onClick={() => removeServerMember(member)}><UserX size={16} /></button>}
+              </div>)}
+            </div>}
+            {serverAdminTab === 'roles' && serverPermissions.manage_roles && <div className="server-admin-content server-role-content">
+              <div className="server-admin-section-title"><div><b>Rollen & Berechtigungen</b><small>Systemrollen sind geschützt; eigene Rollen lassen sich bearbeiten.</small></div><span>{serverRoles.length}</span></div>
+              <div className="server-role-list">{serverRoles.map((role) => <div className={`server-role-row ${roleDraft?.id === role.id ? 'editing' : ''}`} key={role.id}>
+                <span className="server-role-color" style={{ background: role.color || '#818cf8' }} /><span><b>{role.name}</b><small>{role.isSystem ? 'Systemrolle' : `${Object.values(role.permissions || {}).filter(Boolean).length} Berechtigungen`}</small></span>
+                {!role.isSystem && <><button className="icon-button" title="Rolle bearbeiten" onClick={() => setRoleDraft({ ...role, permissions: { ...role.permissions } })}><Settings2 size={15} /></button><button className="icon-button server-remove-member" title="Rolle löschen" onClick={() => deleteServerRole(role)}><Trash2 size={15} /></button></>}
+              </div>)}</div>
+              {roleDraft && <form className="server-role-editor" onSubmit={saveServerRole}>
+                <div className="server-role-editor-heading"><b>Rolle bearbeiten</b><button type="button" className="icon-button" aria-label="Bearbeitung schließen" onClick={() => setRoleDraft(null)}><X size={15} /></button></div>
+                <div className="server-role-fields"><label className="field"><span>Name</span><input className="plain-input" value={roleDraft.name} onChange={(event) => setRoleDraft((current) => ({ ...current, name: event.target.value }))} minLength="2" maxLength="32" required /></label><label className="field"><span>Farbe</span><input type="color" value={roleDraft.color || '#818cf8'} onChange={(event) => setRoleDraft((current) => ({ ...current, color: event.target.value }))} /></label></div>
+                <div className="server-permission-grid">{SERVER_PERMISSION_LABELS.map(([key, label]) => <label key={key}><input type="checkbox" checked={Boolean(roleDraft.permissions[key])} onChange={(event) => setRoleDraft((current) => ({ ...current, permissions: { ...current.permissions, [key]: event.target.checked } }))} />{label}</label>)}</div>
+                <button className="button button-primary">Änderungen speichern</button>
+              </form>}
+              <form className="server-role-editor server-new-role" onSubmit={createServerRole}>
+                <b>Neue Rolle anlegen</b>
+                <div className="server-role-fields"><label className="field"><span>Name</span><input className="plain-input" value={newRoleName} onChange={(event) => setNewRoleName(event.target.value)} minLength="2" maxLength="32" placeholder="z. B. Moderator" required /></label><label className="field"><span>Farbe</span><input type="color" value={newRoleColor} onChange={(event) => setNewRoleColor(event.target.value)} /></label></div>
+                <div className="server-permission-grid">{SERVER_PERMISSION_LABELS.map(([key, label]) => <label key={key}><input type="checkbox" checked={Boolean(newRolePermissions[key])} onChange={(event) => setNewRolePermissions((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>)}</div>
+                <button className="button button-dark">Rolle erstellen</button>
+              </form>
+            </div>}
+            {serverAdminTab === 'invites' && serverPermissions.manage_invites && <div className="server-admin-content">
+              <div className="server-admin-section-title"><div><b>Einladungslink</b><small>Teile den Link, damit andere beitreten können.</small></div><UserPlus size={18} /></div>
+              {serverInvite ? <div className="server-invite-card">
+                <div className="server-invite-url"><Link2 size={16} /><span>{serverInvite.url}</span><button className="icon-button" title="Link kopieren" aria-label="Link kopieren" onClick={copyServerInvite}><Copy size={15} /></button></div>
+                <p>{serverInvite.useCount || 0} Beitritte{serverInvite.expiresAt ? ` · läuft ab ${new Date(serverInvite.expiresAt).toLocaleDateString()}` : ' · kein Ablaufdatum'}</p>
+                <div className="server-invite-actions"><button className="button button-dark" onClick={copyServerInvite}>{copiedInvite ? <Check size={15} /> : <Copy size={15} />}{copiedInvite ? 'Kopiert' : 'Link kopieren'}</button><button className="button button-danger" onClick={revokeServerInvite}>Ungültig machen</button></div>
+              </div> : <div className="server-invite-empty"><span><UserPlus size={20} /></span><b>Kein aktiver Einladungslink</b><p>Bestimme, wie lange und wie oft der Link genutzt werden kann.</p>
+                <div className="server-invite-options">
+                  <label className="field"><span>Gültigkeit</span><select className="plain-input" value={inviteExpiry} onChange={(event) => setInviteExpiry(event.target.value)}><option value="">Unbegrenzt</option><option value="1">1 Stunde</option><option value="24">24 Stunden</option><option value="168">7 Tage</option><option value="720">30 Tage</option></select></label>
+                  <label className="field"><span>Nutzungen</span><select className="plain-input" value={inviteMaxUses} onChange={(event) => setInviteMaxUses(event.target.value)}><option value="">Unbegrenzt</option><option value="1">1 Person</option><option value="5">5 Personen</option><option value="10">10 Personen</option><option value="50">50 Personen</option></select></label>
+                </div>
+                <button className="button button-primary" onClick={createServerInvite}>Einladung erstellen <ArrowRight size={15} /></button></div>}
+            </div>}
+            {activeServer?.owner_id !== user.id && <button className="button button-danger server-admin-leave" onClick={leaveServer}>Server verlassen</button>}
+          </section>
+        </div>}
         {(info || (error && !selected)) && <div className={`workspace-toast ${error ? 'toast-error' : ''}`} role={error ? 'alert' : 'status'}>{error || info}<button aria-label="Hinweis schließen" onClick={() => { setInfo(''); setError(''); }}><X size={15} /></button></div>}
         {/* ── Incoming Call Ringing Popup (Discord-Style) ── */}
         {incomingCall && (
@@ -2037,6 +2571,79 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   );
 }
 
+function InvitePage({ code, session, token, onToken, theme, joinPending, onRequestJoin, onJoined, onCancelPending }) {
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [joining, setJoining] = useState(false);
+  const [error, setError] = useState('');
+  const attempted = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    attempted.current = false;
+    setLoading(true);
+    setError('');
+    setPreview(null);
+    request(`/servers/invites/${encodeURIComponent(code)}`)
+      .then((result) => { if (active) setPreview(result); })
+      .catch((requestError) => { if (active) setError(requestError.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [code]);
+
+  const join = useCallback(async () => {
+    if (!session || joining) return;
+    setJoining(true);
+    setError('');
+    try {
+      const result = await request(`/servers/invites/${encodeURIComponent(code)}/join`, {
+        method: 'POST',
+        token,
+        onToken
+      });
+      onJoined(result.serverId);
+    } catch (requestError) {
+      setError(requestError.message);
+      onCancelPending?.();
+    } finally {
+      setJoining(false);
+    }
+  }, [code, joining, onCancelPending, onJoined, onToken, session, token]);
+
+  useEffect(() => {
+    if (joinPending && session && preview && !attempted.current) {
+      attempted.current = true;
+      join();
+    }
+  }, [join, joinPending, preview, session]);
+
+  const serverIcon = preview?.server?.iconUrl || preview?.server?.icon_url || '';
+  const serverMark = serverIcon.startsWith('emoji:')
+    ? serverIcon.slice(6)
+    : serverIcon
+      ? <img src={serverIcon} alt="" />
+      : <UsersRound size={28} />;
+
+  return <main className={`invite-page ${theme}`}>
+    <header className="invite-brand"><Brand /><span>MINGLE COMMUNITY</span></header>
+    <section className="invite-card" aria-live="polite">
+      <div className="invite-emblem">{serverMark}</div>
+      <span className="auth-kicker">DU BIST EINGELADEN</span>
+      {loading ? <><h1>Einladung wird geprüft</h1><p>Wir schauen nach, wohin der Link führt.</p><span className="loader" /></> : error && !preview ? <><h1>Einladung nicht verfügbar</h1><p>{error}</p></> : preview ? <>
+        <h1>{preview.server.name}</h1>
+        <p>Du wurdest eingeladen, dieser Mingle-Community beizutreten.</p>
+        <div className="invite-server-meta"><span><UsersRound size={16} /> {preview.server.memberCount} Mitglieder</span><span><ShieldCheck size={16} /> Mingle-Server</span></div>
+        {error && <div className="form-message error" role="alert">{error}</div>}
+        <button className="button button-primary invite-join-button" onClick={() => session ? join() : onRequestJoin()} disabled={joining || loading}>
+          {joining ? 'Server wird geöffnet …' : session ? 'Server beitreten' : 'Anmelden & beitreten'} <ArrowRight size={17} />
+        </button>
+        {!session && <small className="invite-auth-note">Nach der Anmeldung setzen wir deinen Beitritt hier fort.</small>}
+      </> : null}
+    </section>
+    <footer className="invite-footer">Mingle <span>·</span> Gespräche, die zusammenbringen.</footer>
+  </main>;
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -2044,12 +2651,21 @@ export default function App() {
   const [showLanding, setShowLanding] = useState(!window.electronAPI && window.location.pathname === '/');
   const [theme, setTheme] = useState(() => window.localStorage.getItem('mingle-theme') || 'light');
   const [page, setPage] = useState(window.location.pathname);
+  const [inviteAuthRequired, setInviteAuthRequired] = useState(false);
+  const [inviteJoinPending, setInviteJoinPending] = useState(false);
+  const [joinedServerId, setJoinedServerId] = useState(null);
   const refreshStarted = useRef(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem('mingle-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    const onPopState = () => setPage(window.location.pathname);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   useEffect(() => {
     if (page === '/verify-email' || page === '/reset-password') {
@@ -2070,6 +2686,23 @@ export default function App() {
     setAuthMode('login');
   }
 
+  function openInvite(code) {
+    const invitePath = `/invite/${encodeURIComponent(code)}`;
+    window.history.pushState({}, '', invitePath);
+    setPage(invitePath);
+    setShowLanding(false);
+    setInviteJoinPending(false);
+    setInviteAuthRequired(false);
+  }
+
+  function completeServerJoin(serverId) {
+    window.history.replaceState({}, '', '/');
+    setPage('/');
+    setJoinedServerId(serverId);
+    setInviteJoinPending(false);
+    setInviteAuthRequired(false);
+  }
+
   function logout() {
     const activeToken = session?.accessToken;
     request('/auth/logout', { method: 'POST', token: activeToken })
@@ -2083,6 +2716,23 @@ export default function App() {
   }
   if (page === '/verify-email') return <VerifyPage onBack={goToLogin} />;
   if (page === '/reset-password') return <ResetPasswordPage onBack={goToLogin} />;
+  const inviteMatch = page.match(/^\/invite\/([^/]+)\/?$/);
+  if (inviteMatch && inviteAuthRequired && !session) {
+    return <AuthPage initialMode={authMode} onSession={(nextSession) => { setSession(nextSession); setInviteAuthRequired(false); }} onBackToLanding={() => setInviteAuthRequired(false)} />;
+  }
+  if (inviteMatch) {
+    return <InvitePage
+      code={decodeURIComponent(inviteMatch[1])}
+      session={session}
+      token={session?.accessToken}
+      onToken={(accessToken) => setSession((current) => current ? { ...current, accessToken } : current)}
+      theme={theme}
+      joinPending={inviteJoinPending}
+      onRequestJoin={() => { setAuthMode('login'); setInviteJoinPending(true); setInviteAuthRequired(true); }}
+      onJoined={completeServerJoin}
+      onCancelPending={() => setInviteJoinPending(false)}
+    />;
+  }
   if (showLanding && !session) {
     return (
       <LandingPage
@@ -2102,6 +2752,9 @@ export default function App() {
       onLogout={logout}
       theme={theme}
       onThemeToggle={() => setTheme((current) => current === 'light' ? 'dark' : 'light')}
+      onOpenInvite={openInvite}
+      initialServerId={joinedServerId}
+      onInitialServerSelected={() => setJoinedServerId(null)}
     />
   );
 }

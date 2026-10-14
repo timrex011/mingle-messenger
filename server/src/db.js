@@ -74,6 +74,31 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
 
+  CREATE TABLE IF NOT EXISTS server_roles (
+    id TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#818cf8',
+    position INTEGER NOT NULL DEFAULT 0,
+    permissions TEXT NOT NULL DEFAULT '{}',
+    is_system INTEGER NOT NULL DEFAULT 0 CHECK (is_system IN (0, 1)),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (server_id, name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_server_roles_server ON server_roles(server_id, position DESC);
+
+  CREATE TABLE IF NOT EXISTS server_invites (
+    code TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP,
+    max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+    use_count INTEGER NOT NULL DEFAULT 0 CHECK (use_count >= 0),
+    revoked_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_server_invites_server ON server_invites(server_id, revoked_at);
+
   CREATE TABLE IF NOT EXISTS user_devices (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -87,6 +112,46 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_user_devices_user ON user_devices(user_id);
 `);
+
+const serverMemberColumns = db.pragma('table_info(server_members)');
+if (!serverMemberColumns.some((column) => column.name === 'role_id')) {
+  db.exec('ALTER TABLE server_members ADD COLUMN role_id TEXT REFERENCES server_roles(id) ON DELETE SET NULL');
+}
+
+const defaultRolePermissions = {
+  owner: JSON.stringify({
+    manage_server: true, manage_channels: true, manage_roles: true,
+    manage_invites: true, kick_members: true, send_messages: true, read_messages: true
+  }),
+  admin: JSON.stringify({
+    manage_server: true, manage_channels: true, manage_roles: true,
+    manage_invites: true, kick_members: true, send_messages: true, read_messages: true
+  }),
+  member: JSON.stringify({ send_messages: true, read_messages: true })
+};
+const insertDefaultRole = db.prepare(`
+  INSERT OR IGNORE INTO server_roles (id, server_id, name, position, permissions, is_system)
+  VALUES (?, ?, ?, ?, ?, 1)
+`);
+const assignLegacyRoles = db.prepare(`
+  UPDATE server_members
+  SET role_id = (
+    SELECT id FROM server_roles
+    WHERE server_id = server_members.server_id AND name = ?
+  )
+  WHERE server_id = ? AND role_id IS NULL AND LOWER(role) = LOWER(?)
+`);
+const migrateServerRoles = db.transaction(() => {
+  for (const server of db.prepare('SELECT id FROM servers').all()) {
+    insertDefaultRole.run(`${server.id}:owner`, server.id, 'Owner', 100, defaultRolePermissions.owner);
+    insertDefaultRole.run(`${server.id}:admin`, server.id, 'Admin', 90, defaultRolePermissions.admin);
+    insertDefaultRole.run(`${server.id}:member`, server.id, 'Member', 0, defaultRolePermissions.member);
+    assignLegacyRoles.run('Owner', server.id, 'Owner');
+    assignLegacyRoles.run('Admin', server.id, 'Admin');
+    assignLegacyRoles.run('Member', server.id, 'Member');
+  }
+});
+migrateServerRoles();
 
 // Automatische Zuweisung des Owners aus der Konfiguration
 if (config.ownerEmail) {

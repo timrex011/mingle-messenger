@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron');
 const crypto = require('node:crypto');
 const fs   = require('node:fs');
 const http  = require('node:http');
@@ -378,6 +378,25 @@ function runStartupSequence() {
 app.whenReady().then(() => {
   if (!verifyAppIntegrity()) return;
   Menu.setApplicationMenu(null);
+  const isTrustedMediaRequest = (webContents, requestingUrl, permission, details = {}) => {
+    if (webContents !== mainWindow?.webContents || permission !== 'media') return false;
+    if (Array.isArray(details.mediaTypes)
+      && (!details.mediaTypes.length || details.mediaTypes.some((type) => !['audio', 'video'].includes(type)))) {
+      return false;
+    }
+    try {
+      const requestingOrigin = new URL(requestingUrl).origin;
+      return requestingOrigin === new URL(currentServiceUrl || CLOUD_URL).origin;
+    } catch {
+      return false;
+    }
+  };
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isTrustedMediaRequest(webContents, details.requestingUrl || webContents.getURL(), permission, details));
+  });
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    return isTrustedMediaRequest(webContents, requestingOrigin, permission, details);
+  });
   runStartupSequence();
 
   app.on('activate', () => {

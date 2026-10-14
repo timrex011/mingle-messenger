@@ -2,7 +2,8 @@ let refreshPromise;
 
 function send(path, { token, method = 'GET', body, headers = {} } = {}, useToken = token) {
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
-  return fetch(`/api${path}`, {
+  const apiPath = path.startsWith('/api/') ? path : `/api${path}`;
+  return fetch(apiPath, {
     method,
     credentials: 'include',
     headers: {

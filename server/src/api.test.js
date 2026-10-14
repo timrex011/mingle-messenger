@@ -368,6 +368,25 @@ test('group administration and private file attachments enforce membership and c
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'application/pdf');
   assert.equal(await response.text(), '%PDF-1.4\nsample document');
+
+  const videoBytes = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x93, 0x42, 0x82, 0x88]);
+  response = await callUpload(
+    `/api/conversations/${conversationId}/attachments`,
+    'clip.webm',
+    videoBytes,
+    'video/webm',
+    alice.accessToken
+  );
+  assert.equal(response.status, 201);
+  const uploadedVideo = (await response.json()).message;
+  assert.equal(uploadedVideo.attachment.name, 'clip.webm');
+  assert.equal(uploadedVideo.attachment.mimeType, 'video/webm');
+  response = await fetch(`${baseUrl}${uploadedVideo.attachment.url}`, {
+    headers: { authorization: 'Bearer ' + alice.accessToken }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'video/webm');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), videoBytes);
   response = await fetch(`${baseUrl}${uploadedMessage.attachment.url}`, {
     headers: { authorization: 'Bearer ' + carol.accessToken }
   });
@@ -417,4 +436,84 @@ test('group administration and private file attachments enforce membership and c
   response = await call(`/api/groups/${conversationId}/members/${alice.user.id}`, 'DELETE', undefined, bob.accessToken);
   assert.equal(response.status, 204);
   await call('/api/auth/logout', 'POST', undefined, outsider.accessToken, outsider.refreshCookie);
+});
+
+test('servers support solo creation, limited invites, membership, channels and server roles', async () => {
+  const owner = await createAccount(`serverowner${Date.now().toString().slice(-5)}`);
+  const member = await createAccount(`servermember${Date.now().toString().slice(-5)}`);
+  const outsider = await createAccount(`serveroutsider${Date.now().toString().slice(-5)}`);
+
+  let response = await call('/api/servers', 'POST', {
+    name: 'Solo Space',
+    iconUrl: null
+  }, owner.accessToken);
+  assert.equal(response.status, 201);
+  const created = await response.json();
+  assert.ok(created.defaultChannelId);
+  assert.match(created.inviteUrl, /\/invite\//);
+
+  response = await call('/api/conversations', 'GET', undefined, owner.accessToken);
+  assert.equal((await response.json()).conversations.some((conversation) =>
+    conversation.id === created.defaultChannelId
+  ), false);
+  response = await call(`/api/groups/${created.defaultChannelId}`, 'GET', undefined, owner.accessToken);
+  assert.equal(response.status, 404);
+
+  response = await call('/api/servers', 'GET', undefined, owner.accessToken);
+  assert.equal((await response.json()).servers.length, 1);
+  response = await call(`/api/conversations/${created.defaultChannelId}/messages`, 'POST', {
+    body: 'Welcome to my server'
+  }, owner.accessToken);
+  assert.equal(response.status, 201);
+
+  response = await call(`/api/servers/${created.id}/invite`, 'POST', {
+    maxUses: 1,
+    expiresInHours: 24
+  }, owner.accessToken);
+  assert.equal(response.status, 201);
+  const invite = (await response.json()).invite;
+  assert.match(invite.url, new RegExp(`/invite/${invite.code}$`));
+
+  response = await call(`/api/servers/invites/${invite.code}`, 'GET');
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).server.name, 'Solo Space');
+
+  response = await call(`/api/servers/invites/${invite.code}/join`, 'POST', {}, member.accessToken);
+  assert.equal(response.status, 201, await response.text());
+  response = await call(`/api/servers/invites/${invite.code}/join`, 'POST', {}, member.accessToken);
+  assert.equal(response.status, 200);
+  response = await call(`/api/servers/invites/${invite.code}/join`, 'POST', {}, outsider.accessToken);
+  assert.equal(response.status, 404);
+
+  response = await call('/api/servers', 'GET', undefined, member.accessToken);
+  assert.equal((await response.json()).servers[0].member_count, 2);
+  response = await call(`/api/conversations/${created.defaultChannelId}/messages`, 'POST', {
+    body: 'Joined through invite'
+  }, member.accessToken);
+  assert.equal(response.status, 201);
+
+  response = await call(`/api/servers/${created.id}/roles`, 'POST', {
+    name: 'Leser',
+    color: '#8b93ff',
+    permissions: { read_messages: true, send_messages: false }
+  }, owner.accessToken);
+  assert.equal(response.status, 201);
+  const customRole = (await response.json()).role;
+  response = await call(`/api/servers/${created.id}/roles`, 'GET', undefined, owner.accessToken);
+  const ownerRole = (await response.json()).roles.find((role) => role.name === 'Owner');
+  response = await call(`/api/servers/${created.id}/members/${member.user.id}/role`, 'PATCH', {
+    roleId: ownerRole.id
+  }, owner.accessToken);
+  assert.equal(response.status, 403);
+  response = await call(`/api/servers/${created.id}/members/${member.user.id}/role`, 'PATCH', {
+    roleId: customRole.id
+  }, owner.accessToken);
+  assert.equal(response.status, 200);
+  response = await call(`/api/conversations/${created.defaultChannelId}/messages`, 'POST', {
+    body: 'This should be blocked'
+  }, member.accessToken);
+  assert.equal(response.status, 404);
+
+  response = await call(`/api/servers/${created.id}/invite`, 'GET', undefined, member.accessToken);
+  assert.equal(response.status, 403);
 });

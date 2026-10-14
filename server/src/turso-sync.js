@@ -14,8 +14,10 @@ const SYNCED_TABLES = [
   'message_deletions',
   'message_attachments',
   'servers',
+  'server_roles',
   'channels',
   'server_members',
+  'server_invites',
   'user_devices',
   'sessions',
   'email_verification_tokens',
@@ -46,36 +48,45 @@ function setupQueueAndTriggers(db) {
     if (!exists) continue;
 
     const cols = db.pragma(`table_info(${table})`).map((c) => c.name);
-    const pkCols = db.pragma(`table_info(${table})`).filter((c) => c.pk > 0).map((c) => c.name);
-    const primaryKey = pkCols.length > 0 ? pkCols[0] : cols[0];
+    const pkCols = db.pragma(`table_info(${table})`)
+      .filter((column) => column.pk > 0)
+      .sort((first, second) => first.pk - second.pk)
+      .map((column) => column.name);
+    const primaryKey = pkCols.length > 0 ? pkCols : [cols[0]];
+    const rowId = (row) => primaryKey.length > 1
+      ? `json_array(${primaryKey.map((column) => `${row}."${column}"`).join(', ')})`
+      : `${row}."${primaryKey[0]}"`;
 
     // Create trigger for INSERT
     db.exec(`
-      CREATE TRIGGER IF NOT EXISTS _trg_turso_ins_${table}
+      DROP TRIGGER IF EXISTS _trg_turso_ins_${table};
+      DROP TRIGGER IF EXISTS _trg_turso_upd_${table};
+      DROP TRIGGER IF EXISTS _trg_turso_del_${table};
+      CREATE TRIGGER _trg_turso_ins_${table}
       AFTER INSERT ON ${table}
       BEGIN
         INSERT INTO _turso_queue (table_name, op, row_id)
-        VALUES ('${table}', 'UPSERT', NEW.${primaryKey});
+        VALUES ('${table}', 'UPSERT', ${rowId('NEW')});
       END;
     `);
 
     // Create trigger for UPDATE
     db.exec(`
-      CREATE TRIGGER IF NOT EXISTS _trg_turso_upd_${table}
+      CREATE TRIGGER _trg_turso_upd_${table}
       AFTER UPDATE ON ${table}
       BEGIN
         INSERT INTO _turso_queue (table_name, op, row_id)
-        VALUES ('${table}', 'UPSERT', NEW.${primaryKey});
+        VALUES ('${table}', 'UPSERT', ${rowId('NEW')});
       END;
     `);
 
     // Create trigger for DELETE
     db.exec(`
-      CREATE TRIGGER IF NOT EXISTS _trg_turso_del_${table}
+      CREATE TRIGGER _trg_turso_del_${table}
       AFTER DELETE ON ${table}
       BEGIN
         INSERT INTO _turso_queue (table_name, op, row_id)
-        VALUES ('${table}', 'DELETE', OLD.${primaryKey});
+        VALUES ('${table}', 'DELETE', ${rowId('OLD')});
       END;
     `);
   }
@@ -181,16 +192,39 @@ async function flushQueue(db) {
 
     for (const item of items) {
       processedIds.push(item.id);
+      const pkCols = db.pragma(`table_info(${item.table_name})`)
+        .filter((column) => column.pk > 0)
+        .sort((first, second) => first.pk - second.pk)
+        .map((column) => column.name);
+      const keys = pkCols.length > 1 && item.row_id.startsWith('[')
+        ? JSON.parse(item.row_id)
+        : [item.row_id];
+      const whereColumns = pkCols.slice(0, keys.length);
+      const whereClause = whereColumns.map((column) => `"${column}" = ?`).join(' AND ');
       if (item.op === 'DELETE') {
         statements.push({
-          sql: `DELETE FROM ${item.table_name} WHERE id = ?`,
-          args: [{ type: 'text', value: item.row_id }]
+          sql: `DELETE FROM ${item.table_name} WHERE ${whereClause}`,
+          args: keys.map((value) => ({ type: 'text', value }))
         });
+        if (keys.length === 1 && pkCols.length > 1) {
+          const rows = db.prepare(`
+            SELECT * FROM ${item.table_name} WHERE "${whereColumns[0]}" = ?
+          `).all(item.row_id);
+          for (const row of rows) {
+            const cols = Object.keys(row);
+            statements.push({
+              sql: `INSERT OR REPLACE INTO ${item.table_name} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+              args: cols.map((column) => {
+                const value = row[column];
+                if (value === null || value === undefined) return { type: 'null' };
+                if (typeof value === 'number') return { type: Number.isInteger(value) ? 'integer' : 'float', value: String(value) };
+                return { type: 'text', value: String(value) };
+              })
+            });
+          }
+        }
       } else if (item.op === 'UPSERT') {
-        const pkCols = db.pragma(`table_info(${item.table_name})`).filter((c) => c.pk > 0).map((c) => c.name);
-        const pk = pkCols[0] || 'id';
-
-        const row = db.prepare(`SELECT * FROM ${item.table_name} WHERE ${pk} = ?`).get(item.row_id);
+        const row = db.prepare(`SELECT * FROM ${item.table_name} WHERE ${whereClause}`).get(...keys);
         if (row) {
           const cols = Object.keys(row);
           const placeholders = cols.map(() => '?').join(', ');
