@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Ban,
+  Bell,
+  BellRing,
   Check,
   CheckCheck,
   ChevronDown,
@@ -42,6 +44,7 @@ import {
   UserRoundCog,
   UserPlus,
   UserX,
+  Volume2,
   UsersRound,
   Video,
   VideoOff,
@@ -557,7 +560,19 @@ function ResetPasswordPage({ onBack }) {
   );
 }
 
-function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
+function SettingsPage({
+  user,
+  token,
+  onUserChange,
+  onToken,
+  onLogout,
+  notificationSettings,
+  notificationPermission,
+  notificationSupported,
+  notificationNotice,
+  onDesktopNotificationsChange,
+  onNotificationSoundChange
+}) {
   const [username, setUsername] = useState(user.username);
   const [age, setAge] = useState(String(user.age));
   const [profileTotpCode, setProfileTotpCode] = useState('');
@@ -780,6 +795,15 @@ function SettingsPage({ user, token, onUserChange, onToken, onLogout }) {
         <Avatar name={user.username} size="large" />
       </div>
       {(message || error) && <div className={`form-message ${error ? 'error' : 'success'}`} role={error ? 'alert' : 'status'}>{error || message}</div>}
+      <NotificationSettings
+        desktopEnabled={notificationSettings.desktop}
+        soundEnabled={notificationSettings.sound}
+        permission={notificationPermission}
+        supported={notificationSupported}
+        notice={notificationNotice}
+        onDesktopChange={onDesktopNotificationsChange}
+        onSoundChange={onNotificationSoundChange}
+      />
       <section className="settings-card">
         <div className="settings-card-title"><span className="settings-icon"><UserRound size={18} /></span><div><h2>Profil &amp; Benutzername</h2><p>Passe deinen Benutzernamen an.</p></div></div>
         <form className="settings-form" onSubmit={profileChallenge ? verifyProfileChange : saveProfile}>
@@ -903,6 +927,105 @@ function messageTime(value) {
 
 const REACTION_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
 
+function NotificationSettings({
+  desktopEnabled,
+  soundEnabled,
+  permission,
+  supported,
+  notice,
+  onDesktopChange,
+  onSoundChange
+}) {
+  const desktopDescription = !supported
+    ? 'Desktop-Benachrichtigungen werden in diesem Browser nicht unterstützt.'
+    : permission === 'denied'
+      ? 'Im Browser blockiert. Ändere die Berechtigung in den Website-Einstellungen.'
+      : desktopEnabled
+        ? 'Neue Nachrichten erscheinen auch außerhalb des geöffneten Fensters.'
+        : 'Nur aktiv, wenn du sie ausdrücklich einschaltest.';
+
+  return (
+    <section className="settings-card notification-settings">
+      <div className="settings-card-title">
+        <span className="settings-icon blue"><BellRing size={18} /></span>
+        <div><h2>Benachrichtigungen</h2><p>Bestimme, wie Mingle dich über neue Nachrichten informiert.</p></div>
+      </div>
+      <div className="notification-options">
+        <div className="notification-option">
+          <span className="notification-option-icon"><Bell size={17} /></span>
+          <span className="notification-option-copy"><b>Desktop-Benachrichtigungen</b><small>{desktopDescription}</small></span>
+          <button
+            className={`preference-switch ${desktopEnabled ? 'enabled' : ''}`}
+            type="button"
+            role="switch"
+            aria-checked={desktopEnabled}
+            aria-label="Desktop-Benachrichtigungen"
+            disabled={!supported || permission === 'denied'}
+            onClick={onDesktopChange}
+          ><i /></button>
+        </div>
+        <div className="notification-option">
+          <span className="notification-option-icon"><Volume2 size={17} /></span>
+          <span className="notification-option-copy"><b>Benachrichtigungston</b><small>Ein kurzer, leiser Ton bei neuen Nachrichten, wenn du den Chat gerade nicht offen hast.</small></span>
+          <button
+            className={`preference-switch ${soundEnabled ? 'enabled' : ''}`}
+            type="button"
+            role="switch"
+            aria-checked={soundEnabled}
+            aria-label="Benachrichtigungston"
+            onClick={onSoundChange}
+          ><i /></button>
+        </div>
+      </div>
+      {notice && <p className="notification-notice" role="status">{notice}</p>}
+    </section>
+  );
+}
+
+function NotificationCenter({ open, unreadCount, items, onToggle, onSelect }) {
+  return (
+    <div className="notification-anchor">
+      <button
+        className={`icon-button notification-bell ${open ? 'active' : ''}`}
+        type="button"
+        aria-label={`Benachrichtigungen${unreadCount ? `, ${unreadCount} ungelesen` : ''}`}
+        aria-expanded={open}
+        aria-controls="notification-center"
+        onClick={onToggle}
+      >
+        <Bell size={18} />
+        {unreadCount > 0 && <i className="notification-total">{unreadCount > 99 ? '99+' : unreadCount}</i>}
+      </button>
+      {open && <section className="notification-popover" id="notification-center" aria-label="Ungelesene Unterhaltungen">
+        <header className="notification-popover-heading">
+          <div><b>Benachrichtigungen</b><small>{unreadCount ? `${unreadCount} ungelesen` : 'Alles gelesen'}</small></div>
+          <span>{items.length}</span>
+        </header>
+        <div className="notification-items">
+          {items.length === 0
+            ? <p className="notification-empty">Hier erscheinen neue Nachrichten aus Chats und Serverkanälen.</p>
+            : items.map((item) => (
+              <button className="notification-item" type="button" key={`${item.kind}:${item.id}`} onClick={() => onSelect(item)}>
+                <span className={`notification-item-mark ${item.kind === 'channel' ? 'channel' : ''}`}>
+                  {item.kind === 'channel' ? <Hash size={16} /> : <MessageCircle size={16} />}
+                </span>
+                <span className="notification-item-copy">
+                  <b>{item.kind === 'channel' ? `#${item.name}` : item.name}</b>
+                  {item.kind === 'channel' && <small className="notification-server-name">{item.serverName}</small>}
+                  <small>{item.lastMessage || 'Neue Nachricht'}</small>
+                </span>
+                <span className="notification-item-meta">
+                  {item.lastMessageAt && <time>{messageTime(item.lastMessageAt)}</time>}
+                  <i>{item.unreadCount > 99 ? '99+' : item.unreadCount}</i>
+                </span>
+              </button>
+            ))}
+        </div>
+      </section>}
+    </div>
+  );
+}
+
 function MessageBubble({ message, mine, token, onToken, onReply, onEdit, onDelete, onReact }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reactionOpen, setReactionOpen] = useState(false);
@@ -1001,6 +1124,25 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  const [notificationSettings, setNotificationSettings] = useState(() => {
+    const saved = window.localStorage.getItem(`mingle-notifications:${user.id}`);
+    if (!saved) return { desktop: false, sound: false };
+    try {
+      const parsed = JSON.parse(saved);
+      return { desktop: parsed.desktop === true, sound: parsed.sound === true };
+    } catch (parseError) {
+      if (parseError instanceof SyntaxError) return { desktop: false, sound: false };
+      throw parseError;
+    }
+  });
+  const [notificationPermission, setNotificationPermission] = useState(
+    typeof window !== 'undefined' && 'Notification' in window ? window.Notification.permission : 'unsupported'
+  );
+  const [notificationNotice, setNotificationNotice] = useState('');
+  const [unreadChannels, setUnreadChannels] = useState([]);
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [incomingToast, setIncomingToast] = useState(null);
+  const notificationSupported = typeof window !== 'undefined' && 'Notification' in window;
 
   // ── WebRTC State ──
   const [callActive, setCallActive] = useState(false);
@@ -1025,6 +1167,16 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const fileInputRef = useRef(null);
   const activeServerIdRef = useRef(null);
   const activeChannelIdRef = useRef(null);
+  const activeSectionRef = useRef(section);
+  const conversationsRef = useRef(conversations);
+  const unreadChannelsRef = useRef(unreadChannels);
+  const notificationSettingsRef = useRef(notificationSettings);
+  const audioContextRef = useRef(null);
+  const toastTimerRef = useRef(null);
+  activeSectionRef.current = section;
+  conversationsRef.current = conversations;
+  unreadChannelsRef.current = unreadChannels;
+  notificationSettingsRef.current = notificationSettings;
 
   const refreshLists = useCallback(async () => {
     const [conversationResult, friendshipResult, blockResult] = await Promise.all([
@@ -1044,6 +1196,112 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     return result.servers || [];
   }, [token, onToken]);
 
+  const refreshUnreadChannels = useCallback(async () => {
+    const result = await request('/servers/notifications/unread', { token, onToken });
+    setUnreadChannels(result.channels || []);
+    return result.channels || [];
+  }, [token, onToken]);
+
+  function playNotificationSound(force = false) {
+    if (!force && !notificationSettingsRef.current.sound) return;
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) return;
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      audioContextRef.current = new AudioContextConstructor();
+    }
+    const context = audioContextRef.current;
+    context.resume().then(() => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 740;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.035, context.currentTime + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.19);
+    }).catch((audioError) => setError(audioError.message));
+  }
+
+  async function toggleDesktopNotifications() {
+    setNotificationNotice('');
+    if (!notificationSupported) {
+      setNotificationNotice('Desktop-Benachrichtigungen werden auf diesem Gerät nicht unterstützt.');
+      return;
+    }
+    if (notificationSettings.desktop) {
+      setNotificationSettings((current) => ({ ...current, desktop: false }));
+      setNotificationNotice('Desktop-Benachrichtigungen sind ausgeschaltet.');
+      return;
+    }
+    if (window.Notification.permission === 'denied') {
+      setNotificationPermission('denied');
+      setNotificationNotice('Mingle ist in den Browser-Einstellungen blockiert. Erlaube Benachrichtigungen dort und versuche es erneut.');
+      return;
+    }
+    try {
+      const permission = window.Notification.permission === 'granted'
+        ? 'granted'
+        : await window.Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === 'granted') {
+        setNotificationSettings((current) => ({ ...current, desktop: true }));
+        setNotificationNotice('Desktop-Benachrichtigungen sind eingeschaltet.');
+      } else {
+        setNotificationSettings((current) => ({ ...current, desktop: false }));
+        setNotificationNotice(permission === 'denied'
+          ? 'Benachrichtigungen wurden abgelehnt. Du kannst sie in den Browser-Einstellungen erlauben.'
+          : 'Benachrichtigungen wurden nicht freigegeben.');
+      }
+    } catch (permissionError) {
+      setNotificationNotice(`Berechtigung konnte nicht angefragt werden: ${permissionError.message}`);
+    }
+  }
+
+  function toggleNotificationSound() {
+    setNotificationNotice('');
+    if (!notificationSettings.sound) {
+      setNotificationSettings((current) => ({ ...current, sound: true }));
+      playNotificationSound(true);
+      setNotificationNotice('Benachrichtigungston ist eingeschaltet.');
+    } else {
+      setNotificationSettings((current) => ({ ...current, sound: false }));
+      setNotificationNotice('Benachrichtigungston ist ausgeschaltet.');
+    }
+  }
+
+  useEffect(() => {
+    window.localStorage.setItem(`mingle-notifications:${user.id}`, JSON.stringify(notificationSettings));
+  }, [notificationSettings, user.id]);
+
+  useEffect(() => {
+    if ((notificationSupported && notificationPermission === 'denied') || !notificationSupported) {
+      if (notificationSettings.desktop) {
+        setNotificationSettings((current) => ({ ...current, desktop: false }));
+      }
+    }
+  }, [notificationPermission, notificationSettings.desktop, notificationSupported]);
+
+  useEffect(() => {
+    refreshUnreadChannels().catch((requestError) => setError(requestError.message));
+  }, [refreshUnreadChannels]);
+
+  useEffect(() => {
+    if (!incomingToast) return undefined;
+    window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setIncomingToast(null), 5500);
+    return () => window.clearTimeout(toastTimerRef.current);
+  }, [incomingToast]);
+
+  useEffect(() => () => {
+    window.clearTimeout(toastTimerRef.current);
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch((audioError) => console.error('Benachrichtigungston konnte nicht beendet werden:', audioError));
+    }
+  }, []);
+
   useEffect(() => {
     refreshLists().catch((requestError) => setError(requestError.message));
   }, [refreshLists]);
@@ -1051,6 +1309,11 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   useEffect(() => {
     refreshServers().catch((requestError) => setError(requestError.message));
   }, [refreshServers]);
+
+  useEffect(() => {
+    const originalTitle = document.title;
+    return () => { document.title = originalTitle; };
+  }, []);
 
   useEffect(() => {
     if (initialServerId) {
@@ -1106,6 +1369,10 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     const socket = io({ path: '/socket.io', auth: { token } });
     socketRef.current = socket;
     let refreshingSocket = false;
+    socket.on('connect', () => {
+      refreshLists().catch((requestError) => setError(requestError.message));
+      refreshUnreadChannels().catch((requestError) => setError(requestError.message));
+    });
     socket.on('connect_error', (socketError) => {
       if (!refreshingSocket && /expired|abgelaufen/i.test(socketError.message)) {
         refreshingSocket = true;
@@ -1203,22 +1470,50 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       }
     });
     socket.on('message:new', (message) => {
+      const isViewingConversation = activeSectionRef.current === 'chats'
+        && selectedIdRef.current === message.conversationId;
+      const isIncomingMessage = message.senderId !== user.id;
       setConversations((current) => current.map((conversation) => conversation.id === message.conversationId
         ? {
             ...conversation,
             lastMessage: message.body || (message.attachment ? `📎 ${message.attachment.name}` : ''),
             lastMessageAt: message.createdAt,
-            unreadCount: message.senderId === user.id || selectedIdRef.current === message.conversationId
+            unreadCount: message.senderId === user.id || isViewingConversation
               ? 0
               : conversation.unreadCount + 1
           }
         : conversation));
-      if (selectedIdRef.current === message.conversationId) {
+      if (isViewingConversation) {
         setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
-        if (message.senderId !== user.id) {
+        if (isIncomingMessage) {
           request(`/conversations/${message.conversationId}/read`, { method: 'POST', token, onToken })
+            .then(() => {
+              setUnreadChannels((current) => current.filter((channel) => channel.id !== message.conversationId));
+              setServerDetail((current) => current ? {
+                ...current,
+                channels: current.channels.map((channel) => channel.id === message.conversationId
+                  ? { ...channel, unreadCount: 0 }
+                  : channel)
+              } : current);
+            })
             .catch((requestError) => setError(requestError.message));
         }
+      } else if (isIncomingMessage) {
+        setUnreadChannels((current) => current.map((channel) => channel.id === message.conversationId
+          ? {
+              ...channel,
+              unreadCount: channel.unreadCount + 1,
+              lastMessage: message.body || (message.attachment ? `📎 ${message.attachment.name}` : ''),
+              lastMessageAt: message.createdAt
+            }
+          : channel));
+        setServerDetail((current) => current ? {
+          ...current,
+          channels: current.channels.map((channel) => channel.id === message.conversationId
+            ? { ...channel, unreadCount: channel.unreadCount + 1 }
+            : channel)
+        } : current);
+        receiveNewMessageNotification(message);
       }
     });
     socket.on('message:updated', (message) => {
@@ -1331,7 +1626,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [token, user.id, onToken, refreshLists, callPeerUser]);
+  }, [token, user.id, onToken, refreshLists, refreshUnreadChannels, callPeerUser]);
 
   // ── WebRTC Actions: Audio, Video & Bildschirmübertragung ──
   function cleanupCall() {
@@ -1575,6 +1870,19 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const visibleConversations = conversations.filter((item) => !conversationQuery
     || (item.name || '').toLocaleLowerCase().includes(conversationQuery)
     || (item.lastMessage || '').toLocaleLowerCase().includes(conversationQuery));
+  const totalUnreadCount = conversations.reduce((total, conversation) => total + conversation.unreadCount, 0)
+    + unreadChannels.reduce((total, channel) => total + channel.unreadCount, 0);
+  const notificationItems = [
+    ...conversations
+      .filter((conversation) => conversation.unreadCount > 0)
+      .map((conversation) => ({ ...conversation, kind: 'conversation' })),
+    ...unreadChannels.map((channel) => ({ ...channel, kind: 'channel' }))
+  ].sort((first, second) => new Date(second.lastMessageAt || 0) - new Date(first.lastMessageAt || 0));
+
+  useEffect(() => {
+    const originalTitle = document.title.replace(/^\(\d+\)\s*/, '');
+    document.title = totalUnreadCount > 0 ? `(${totalUnreadCount}) ${originalTitle}` : originalTitle;
+  }, [totalUnreadCount]);
 
   useEffect(() => {
     function handleSearchShortcut(event) {
@@ -1642,9 +1950,79 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
       if (selectedIdRef.current !== channel.id || activeServerIdRef.current !== serverId) return;
       setMessages(result.messages || []);
       await request(`/conversations/${channel.id}/read`, { method: 'POST', token, onToken });
+      setUnreadChannels((current) => current.filter((item) => item.id !== channel.id));
+      setServerDetail((current) => current ? {
+        ...current,
+        channels: current.channels.map((item) => item.id === channel.id ? { ...item, unreadCount: 0 } : item)
+      } : current);
+      refreshUnreadChannels().catch((requestError) => setError(requestError.message));
     } catch (requestError) {
       if (selectedIdRef.current === channel.id) setError(requestError.message);
     }
+  }
+
+  function receiveNewMessageNotification(message) {
+    if (notificationSettingsRef.current.sound) playNotificationSound();
+    const deliver = (channels) => {
+      const conversation = conversationsRef.current.find((item) => item.id === message.conversationId);
+      const channel = channels.find((item) => item.id === message.conversationId)
+        || unreadChannelsRef.current.find((item) => item.id === message.conversationId);
+      const item = conversation
+        ? { ...conversation, kind: 'conversation' }
+        : channel
+          ? { ...channel, kind: 'channel' }
+          : null;
+      if (!item) return;
+      const preview = (message.body || (message.attachment ? `📎 ${message.attachment.name}` : 'Neue Nachricht')).slice(0, 140);
+      const toast = {
+        ...item,
+        preview,
+        sender: message.senderUsername || 'Neue Nachricht'
+      };
+      const canNotifyNatively = document.hidden
+        && notificationSettingsRef.current.desktop
+        && notificationSupported
+        && window.Notification.permission === 'granted';
+      if (canNotifyNatively) {
+        try {
+          const nativeNotification = new window.Notification(`Mingle · ${item.kind === 'channel' ? `#${item.name}` : item.name}`, {
+            body: `${toast.sender}: ${preview}`
+          });
+          nativeNotification.onclick = () => {
+            window.focus();
+            selectNotificationItem(item);
+            nativeNotification.close();
+          };
+          return;
+        } catch (notificationError) {
+          setError(notificationError.message);
+        }
+      }
+      setIncomingToast(toast);
+    };
+    const knownConversation = conversationsRef.current.some((item) => item.id === message.conversationId);
+    const knownChannel = unreadChannelsRef.current.some((item) => item.id === message.conversationId);
+    if (knownConversation) {
+      deliver(unreadChannelsRef.current);
+    } else if (knownChannel) {
+      deliver(unreadChannelsRef.current);
+    } else {
+      Promise.all([refreshLists(), refreshUnreadChannels()])
+        .then(([, channels]) => deliver(channels))
+        .catch((requestError) => setError(requestError.message));
+    }
+  }
+
+  function selectNotificationItem(item) {
+    setNotificationCenterOpen(false);
+    setIncomingToast(null);
+    if (item.kind === 'channel') {
+      const server = servers.find((entry) => entry.id === item.serverId);
+      if (server) selectServer(server);
+      selectServerChannel({ id: item.id, name: item.name, type: 'text' }, item.serverId);
+      return;
+    }
+    selectConversation(item);
   }
 
   async function createServer(event) {
@@ -2242,7 +2620,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
             </div>
             <div className="server-channel-heading"><span>TEXTKANÄLE</span>{serverPermissions.manage_channels && <button className="icon-button" title="Kanal erstellen" aria-label="Kanal erstellen" onClick={() => setCreateChannelOpen(true)}><Plus size={16} /></button>}</div>
             <div className="server-channel-list">
-              {!serverDetail ? <p className="server-loading">Kanäle werden geladen …</p> : serverDetail.channels?.length ? serverDetail.channels.map((channel) => <button key={channel.id} className={`server-channel-item ${activeChannelId === channel.id ? 'selected' : ''}`} onClick={() => selectServerChannel(channel)}><Hash size={16} /><span>{channel.name}</span></button>) : <p className="server-loading">Keine lesbaren Kanäle vorhanden.</p>}
+              {!serverDetail ? <p className="server-loading">Kanäle werden geladen …</p> : serverDetail.channels?.length ? serverDetail.channels.map((channel) => <button key={channel.id} className={`server-channel-item ${activeChannelId === channel.id ? 'selected' : ''}`} onClick={() => selectServerChannel(channel)}><Hash size={16} /><span>{channel.name}</span>{channel.unreadCount > 0 && <i>{channel.unreadCount > 99 ? '99+' : channel.unreadCount}</i>}</button>) : <p className="server-loading">Keine lesbaren Kanäle vorhanden.</p>}
             </div>
             <button className="server-leave-button" onClick={leaveServer} disabled={activeServer?.owner_id === user.id}>Server verlassen</button>
           </section>
@@ -2312,6 +2690,13 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
           <div className="topbar-context"><span className={`context-dot ${selected?.peer?.online ? '' : 'offline'}`} /><span>{settingsVisible ? 'Dein Konto' : selected ? selected.name : section === 'contacts' ? 'Kontakte' : activeServer?.name || 'Deine Nachrichten'}</span></div>
           <div className="topbar-actions">
             {selected?.peer && <span className="presence-label">{typing ? 'schreibt gerade…' : selected.peer.online ? 'online' : 'offline'}</span>}
+            <NotificationCenter
+              open={notificationCenterOpen}
+              unreadCount={totalUnreadCount}
+              items={notificationItems}
+              onToggle={() => setNotificationCenterOpen((open) => !open)}
+              onSelect={selectNotificationItem}
+            />
             <span className="secure-label"><ShieldCheck size={15} /> Sicher verbunden</span>
             {selected?.peer && <button className="icon-button block-button" title="Kontakt blockieren" aria-label="Kontakt blockieren" onClick={() => blockUser(selected.peer)}><Ban size={17} /></button>}
             {selected?.type === 'server-channel' && <button className="icon-button server-member-toggle" title="Mitglieder anzeigen" aria-label="Mitglieder anzeigen" onClick={() => setServerMembersOpen((open) => !open)}><UsersRound size={17} /></button>}
@@ -2319,7 +2704,19 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
           </div>
         </header>
         {settingsVisible ? (
-          <SettingsPage user={user} token={token} onUserChange={onUserChange} onToken={onToken} onLogout={onLogout} />
+          <SettingsPage
+            user={user}
+            token={token}
+            onUserChange={onUserChange}
+            onToken={onToken}
+            onLogout={onLogout}
+            notificationSettings={notificationSettings}
+            notificationPermission={notificationPermission}
+            notificationSupported={notificationSupported}
+            notificationNotice={notificationNotice}
+            onDesktopNotificationsChange={toggleDesktopNotifications}
+            onNotificationSoundChange={toggleNotificationSound}
+          />
         ) : selected ? (
           <section className={`chat-room ${selected.type === 'server-channel' ? 'server-chat-room' : ''}`}>
             <div className="chat-room-header">
@@ -2547,6 +2944,13 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
           </section>
         </div>}
         {(info || (error && !selected)) && <div className={`workspace-toast ${error ? 'toast-error' : ''}`} role={error ? 'alert' : 'status'}>{error || info}<button aria-label="Hinweis schließen" onClick={() => { setInfo(''); setError(''); }}><X size={15} /></button></div>}
+        {incomingToast && <aside className="message-toast" role="status" aria-live="polite">
+          <button className="message-toast-open" onClick={() => selectNotificationItem(incomingToast)}>
+            <span className={`notification-item-mark ${incomingToast.kind === 'channel' ? 'channel' : ''}`}>{incomingToast.kind === 'channel' ? <Hash size={16} /> : <MessageCircle size={16} />}</span>
+            <span><b>{incomingToast.sender} · {incomingToast.kind === 'channel' ? `#${incomingToast.name}` : incomingToast.name}</b><small>{incomingToast.preview}</small></span>
+          </button>
+          <button className="message-toast-dismiss" aria-label="Benachrichtigung schließen" onClick={() => setIncomingToast(null)}><X size={15} /></button>
+        </aside>}
         {/* ── Incoming Call Ringing Popup (Discord-Style) ── */}
         {incomingCall && (
           <div className="incoming-call-modal">

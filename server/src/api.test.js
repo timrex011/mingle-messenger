@@ -492,6 +492,41 @@ test('servers support solo creation, limited invites, membership, channels and s
   }, member.accessToken);
   assert.equal(response.status, 201);
 
+  response = await call('/api/servers/notifications/unread', 'GET', undefined, member.accessToken);
+  let unreadChannels = (await response.json()).channels;
+  assert.deepEqual(unreadChannels.map((channel) => [channel.id, channel.unreadCount]), [
+    [created.defaultChannelId, 1]
+  ]);
+  response = await call(`/api/conversations/${created.defaultChannelId}/messages`, 'POST', {
+    body: 'Another unread channel message'
+  }, owner.accessToken);
+  assert.equal(response.status, 201);
+  response = await call('/api/servers/notifications/unread', 'GET', undefined, member.accessToken);
+  unreadChannels = (await response.json()).channels;
+  assert.deepEqual(unreadChannels.map((channel) => [channel.id, channel.unreadCount]), [
+    [created.defaultChannelId, 2]
+  ]);
+  response = await call(`/api/servers/${created.id}`, 'GET', undefined, member.accessToken);
+  assert.equal((await response.json()).channels[0].unreadCount, 2);
+  response = await call(`/api/conversations/${created.defaultChannelId}/read`, 'POST', {}, member.accessToken);
+  assert.equal(response.status, 200);
+  response = await call('/api/servers/notifications/unread', 'GET', undefined, member.accessToken);
+  assert.deepEqual((await response.json()).channels, []);
+
+  const ownerRoleId = db.prepare('SELECT role_id FROM server_members WHERE server_id = ? AND user_id = ?')
+    .get(created.id, owner.user.id).role_id;
+  db.prepare('UPDATE server_members SET role_id = NULL WHERE server_id = ? AND user_id = ?')
+    .run(created.id, owner.user.id);
+  response = await call('/api/servers/notifications/unread', 'GET', undefined, owner.accessToken);
+  unreadChannels = (await response.json()).channels;
+  assert.deepEqual(unreadChannels.map((channel) => [channel.id, channel.unreadCount]), [
+    [created.defaultChannelId, 1]
+  ]);
+  db.prepare('UPDATE server_members SET role_id = ? WHERE server_id = ? AND user_id = ?')
+    .run(ownerRoleId, created.id, owner.user.id);
+  response = await call(`/api/conversations/${created.defaultChannelId}/read`, 'POST', {}, owner.accessToken);
+  assert.equal(response.status, 200);
+
   response = await call(`/api/servers/${created.id}/roles`, 'POST', {
     name: 'Leser',
     color: '#8b93ff',
@@ -516,4 +551,19 @@ test('servers support solo creation, limited invites, membership, channels and s
 
   response = await call(`/api/servers/${created.id}/invite`, 'GET', undefined, member.accessToken);
   assert.equal(response.status, 403);
+
+  response = await call(`/api/conversations/${created.defaultChannelId}/messages`, 'POST', {
+    body: 'Unread in a restricted channel'
+  }, owner.accessToken);
+  assert.equal(response.status, 201);
+  response = await call(`/api/servers/${created.id}/roles/${customRole.id}`, 'PATCH', {
+    permissions: { read_messages: false, send_messages: false }
+  }, owner.accessToken);
+  assert.equal(response.status, 200);
+  response = await call('/api/servers/notifications/unread', 'GET', undefined, member.accessToken);
+  assert.deepEqual((await response.json()).channels, []);
+  response = await call(`/api/servers/${created.id}`, 'GET', undefined, member.accessToken);
+  assert.deepEqual((await response.json()).channels, []);
+  response = await call(`/api/conversations/${created.defaultChannelId}/read`, 'POST', {}, member.accessToken);
+  assert.equal(response.status, 404);
 });

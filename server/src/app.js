@@ -1328,6 +1328,66 @@ serverRouter.post('/', requireAuth, asyncRoute(async (req, res) => {
   });
 }));
 
+serverRouter.get('/notifications/unread', requireAuth, asyncRoute(async (req, res) => {
+  const channels = db.prepare(`
+    SELECT c.id, c.server_id, c.name, s.name AS server_name,
+      (SELECT COUNT(*) FROM messages m
+        WHERE m.conversation_id = c.id AND m.sender_id <> ? AND m.deleted_at IS NULL
+          AND (mine.last_read_at IS NULL OR m.created_at > mine.last_read_at)
+          AND NOT EXISTS (
+            SELECT 1 FROM message_deletions md
+            WHERE md.message_id = m.id AND md.user_id = ?
+          )) AS unread_count,
+      (SELECT CASE WHEN m.body <> '' THEN m.body
+        ELSE COALESCE((SELECT '📎 ' || a.original_name
+          FROM message_attachments a WHERE a.message_id = m.id), '')
+        END FROM messages m
+        WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM message_deletions md
+            WHERE md.message_id = m.id AND md.user_id = ?
+          )
+        ORDER BY m.created_at DESC LIMIT 1) AS last_message,
+      (SELECT m.created_at FROM messages m
+        WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM message_deletions md
+            WHERE md.message_id = m.id AND md.user_id = ?
+          )
+        ORDER BY m.created_at DESC LIMIT 1) AS last_message_at
+    FROM channels c
+    JOIN servers s ON s.id = c.server_id
+    JOIN server_members sm ON sm.server_id = s.id AND sm.user_id = ?
+    LEFT JOIN server_roles sr ON sr.id = sm.role_id
+    JOIN conversation_members mine ON mine.conversation_id = c.id AND mine.user_id = ?
+    WHERE (s.owner_id = ? OR COALESCE(json_extract(sr.permissions, '$.read_messages'), 0) = 1)
+      AND EXISTS (
+        SELECT 1 FROM messages m
+        WHERE m.conversation_id = c.id AND m.sender_id <> ? AND m.deleted_at IS NULL
+          AND (mine.last_read_at IS NULL OR m.created_at > mine.last_read_at)
+          AND NOT EXISTS (
+            SELECT 1 FROM message_deletions md
+            WHERE md.message_id = m.id AND md.user_id = ?
+          )
+      )
+    ORDER BY COALESCE(last_message_at, c.created_at) DESC
+  `).all(
+    req.auth.sub, req.auth.sub, req.auth.sub, req.auth.sub,
+    req.auth.sub, req.auth.sub, req.auth.sub, req.auth.sub, req.auth.sub
+  );
+  res.json({
+    channels: channels.map((channel) => ({
+      id: channel.id,
+      serverId: channel.server_id,
+      serverName: channel.server_name,
+      name: channel.name,
+      unreadCount: channel.unread_count,
+      lastMessage: channel.last_message,
+      lastMessageAt: channel.last_message_at
+    }))
+  });
+}));
+
 serverRouter.get('/:id', requireAuth, asyncRoute(async (req, res) => {
   const membership = getServerMembership(req.params.id, req.auth.sub);
   if (!membership) {
@@ -1340,11 +1400,28 @@ serverRouter.get('/:id', requireAuth, asyncRoute(async (req, res) => {
     FROM servers s WHERE s.id = ?
   `).get(req.params.id);
   const channels = db.prepare(`
-    SELECT id, name, topic, type, position FROM channels
-    WHERE server_id = ? ORDER BY position ASC, created_at ASC
-  `).all(req.params.id).filter(() =>
-    hasServerPermission(req.params.id, req.auth.sub, 'read_messages')
-  );
+    SELECT c.id, c.name, c.topic, c.type, c.position,
+      (SELECT COUNT(*) FROM messages m
+        WHERE m.conversation_id = c.id AND m.sender_id <> ? AND m.deleted_at IS NULL
+          AND (mine.last_read_at IS NULL OR m.created_at > mine.last_read_at)
+          AND NOT EXISTS (
+            SELECT 1 FROM message_deletions md
+            WHERE md.message_id = m.id AND md.user_id = ?
+          )) AS unread_count
+    FROM channels c
+    JOIN conversation_members mine ON mine.conversation_id = c.id AND mine.user_id = ?
+    WHERE c.server_id = ? ORDER BY c.position ASC, c.created_at ASC
+  `).all(req.auth.sub, req.auth.sub, req.auth.sub, req.params.id);
+  const readableChannels = hasServerPermission(req.params.id, req.auth.sub, 'read_messages')
+    ? channels.map((channel) => ({
+      id: channel.id,
+      name: channel.name,
+      topic: channel.topic,
+      type: channel.type,
+      position: channel.position,
+      unreadCount: channel.unread_count
+    }))
+    : [];
   res.json({
     server: {
       ...server,
@@ -1353,7 +1430,7 @@ serverRouter.get('/:id', requireAuth, asyncRoute(async (req, res) => {
       myRole: membership.role_name || membership.role,
       myPermissions: membership.permissions ? JSON.parse(membership.permissions) : {}
     },
-    channels
+    channels: readableChannels
   });
 }));
 
