@@ -1,6 +1,6 @@
 {
   "name": "messenger-app",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "A secure, email-based real-time messenger",
   "author": "Mingle",

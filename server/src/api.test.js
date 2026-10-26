@@ -156,6 +156,89 @@ test('friends can chat, read, edit, delete and block', async () => {
   assert.equal(response.status, 401);
 });
 
+test('profile media, private group permissions, and per-user conversation hiding', async () => {
+  const suffix = Date.now().toString().slice(-5);
+  const alice = await createAccount(`mediaa${suffix}`);
+  const bob = await createAccount(`mediab${suffix}`);
+  const png = Buffer.from(
+    '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082',
+    'hex'
+  );
+
+  let response = await call('/api/users/profile', 'PATCH', {
+    about: '  Kaffeeliebhaberin und Kartenzeichnerin  ',
+    pronouns: 'sie/ihr'
+  }, alice.accessToken);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).user.about, 'Kaffeeliebhaberin und Kartenzeichnerin');
+  response = await call('/api/users/profile', 'PATCH', { about: 'x'.repeat(501) }, alice.accessToken);
+  assert.equal(response.status, 400);
+  response = await call('/api/auth/me', 'GET', undefined, alice.accessToken);
+  assert.equal((await response.json()).user.pronouns, 'sie/ihr');
+
+  response = await callUpload('/api/users/profile/media/avatar', 'spoofed.png', Buffer.from('not an image'), 'image/png', alice.accessToken);
+  assert.equal(response.status, 400);
+  response = await callUpload('/api/users/profile/media/avatar', 'avatar.png', png, 'image/png', alice.accessToken);
+  assert.equal(response.status, 201);
+  const profileUser = (await response.json()).user;
+  assert.match(profileUser.avatarUrl, /^\/api\/media\/[0-9a-f-]{36}$/i);
+  response = await call(profileUser.avatarUrl, 'GET');
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+
+  response = await call('/api/friendships', 'POST', { username: bob.user.username }, alice.accessToken);
+  const friendship = await response.json();
+  response = await call(`/api/friendships/${friendship.friendshipId}/accept`, 'POST', {}, bob.accessToken);
+  const { conversationId } = await response.json();
+  response = await call(`/api/conversations/${conversationId}/messages`, 'POST', { body: 'Keep this history' }, alice.accessToken);
+  assert.equal(response.status, 201);
+  response = await call(`/api/conversations/${conversationId}`, 'DELETE', undefined, alice.accessToken);
+  assert.equal(response.status, 204);
+  response = await call(`/api/conversations/${conversationId}/messages`, 'GET', undefined, alice.accessToken);
+  assert.equal(response.status, 404);
+  response = await call('/api/conversations', 'GET', undefined, bob.accessToken);
+  assert.equal((await response.json()).conversations.some((conversation) => conversation.id === conversationId), true);
+  response = await call(`/api/conversations/${conversationId}/messages`, 'GET', undefined, bob.accessToken);
+  assert.equal((await response.json()).messages[0].body, 'Keep this history');
+
+  response = await call('/api/groups', 'POST', {
+    name: 'Media group',
+    memberIds: [bob.user.id]
+  }, alice.accessToken);
+  assert.equal(response.status, 201);
+  const { conversationId: groupId } = await response.json();
+  response = await callUpload(`/api/groups/${groupId}/media/icon`, 'group.png', png, 'image/png', bob.accessToken);
+  assert.equal(response.status, 403);
+  response = await callUpload(`/api/groups/${groupId}/media/icon`, 'group.png', png, 'image/png', alice.accessToken);
+  assert.equal(response.status, 201);
+  const groupMedia = (await response.json()).group;
+  assert.match(groupMedia.iconUrl, /^\/api\/media\/[0-9a-f-]{36}$/i);
+  response = await call(`/api/conversations/${groupId}/messages`, 'POST', { body: 'Group history stays' }, alice.accessToken);
+  assert.equal(response.status, 201);
+  response = await call(`/api/conversations/${groupId}`, 'DELETE', undefined, alice.accessToken);
+  assert.equal(response.status, 204);
+  response = await call(`/api/conversations/${groupId}/messages`, 'GET', undefined, bob.accessToken);
+  assert.equal((await response.json()).messages[0].body, 'Group history stays');
+
+  response = await call('/api/servers', 'POST', { name: 'Media server' }, alice.accessToken);
+  assert.equal(response.status, 201);
+  const server = await response.json();
+  response = await call(`/api/servers/${server.id}/invite`, 'POST', {}, alice.accessToken);
+  const invite = (await response.json()).invite;
+  response = await call(`/api/servers/invites/${invite.code}/join`, 'POST', {}, bob.accessToken);
+  assert.equal(response.status, 201);
+  response = await callUpload(`/api/servers/${server.id}/media/banner`, 'server.png', png, 'image/png', bob.accessToken);
+  assert.equal(response.status, 403);
+  response = await callUpload(`/api/servers/${server.id}/media/banner`, 'server.png', png, 'image/png', alice.accessToken);
+  assert.equal(response.status, 201);
+  const serverMedia = (await response.json()).server;
+  assert.match(serverMedia.banner_url, /^\/api\/media\/[0-9a-f-]{36}$/i);
+  response = await call(`/api/conversations/${server.defaultChannelId}`, 'DELETE', undefined, alice.accessToken);
+  assert.equal(response.status, 404);
+  response = await call(`/api/servers/${server.id}`, 'GET', undefined, alice.accessToken);
+  assert.equal(response.status, 200);
+});
+
 test('verification can be resent and password reset links complete the account flow', async () => {
   const username = `reset${Date.now().toString().slice(-5)}`;
   const email = `${username}@example.com`;

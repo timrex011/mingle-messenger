@@ -4,6 +4,12 @@ const path = require('node:path');
 const express = require('express');
 const multer = require('multer');
 const config = require('./config');
+const {
+  imageUploadMiddleware,
+  isValidImage,
+  saveImage,
+  deleteImageIfUnreferenced
+} = require('./image-media');
 
 const REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '🎉']);
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
@@ -74,6 +80,8 @@ function createChatRouter({ db, requireAuth, realtime }) {
 
   function conversationAvailable(conversationId, userId, permission = 'read_messages') {
     if (!isConversationMember(conversationId, userId)) return false;
+    if (db.prepare('SELECT 1 FROM conversation_hides WHERE conversation_id = ? AND user_id = ?')
+      .get(conversationId, userId)) return false;
     const conversation = db.prepare('SELECT type FROM conversations WHERE id = ?').get(conversationId);
     if (!conversation) return false;
     const serverChannel = db.prepare(`
@@ -109,7 +117,11 @@ function createChatRouter({ db, requireAuth, realtime }) {
         AND (SELECT COUNT(*) FROM conversation_members members WHERE members.conversation_id = c.id) = 2
       LIMIT 1
     `).get(firstUserId, secondUserId);
-    if (existing) return existing.id;
+    if (existing) {
+      db.prepare('DELETE FROM conversation_hides WHERE conversation_id = ? AND user_id = ?')
+        .run(existing.id, firstUserId);
+      return existing.id;
+    }
 
     const conversationId = crypto.randomUUID();
     db.prepare('INSERT INTO conversations (id, type, created_by) VALUES (?, ?, ?)').run(conversationId, 'direct', firstUserId);
@@ -222,7 +234,8 @@ function createChatRouter({ db, requireAuth, realtime }) {
   router.get('/friendships', (req, res) => {
     const rows = db.prepare(`
       SELECT f.id, f.requester_id, f.addressee_id, f.status, f.created_at,
-        u.id AS peer_id, u.username AS peer_username, u.last_seen_at AS peer_last_seen
+        u.id AS peer_id, u.username AS peer_username, u.last_seen_at AS peer_last_seen,
+        u.avatar_url AS peer_avatar_url, u.about AS peer_about, u.pronouns AS peer_pronouns
       FROM friendships f
       JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
       WHERE (f.requester_id = ? OR f.addressee_id = ?)
@@ -238,6 +251,9 @@ function createChatRouter({ db, requireAuth, realtime }) {
       user: {
         id: row.peer_id,
         username: row.peer_username,
+        avatarUrl: row.peer_avatar_url || '',
+        about: row.peer_about || '',
+        pronouns: row.peer_pronouns || '',
         online: realtime.isOnline(row.peer_id),
         lastSeenAt: row.peer_last_seen
       },
@@ -385,8 +401,9 @@ function createChatRouter({ db, requireAuth, realtime }) {
 
   router.get('/conversations', (req, res) => {
     const conversations = db.prepare(`
-      SELECT c.id, c.type, c.name, c.created_at,
+      SELECT c.id, c.type, c.name, c.icon_url, c.banner_url, c.created_at,
         peer.id AS peer_id, peer.username AS peer_username, peer.last_seen_at AS peer_last_seen,
+        peer.avatar_url AS peer_avatar_url, peer.about AS peer_about, peer.pronouns AS peer_pronouns,
         (SELECT CASE WHEN m.body <> '' THEN m.body
           ELSE COALESCE((SELECT '📎 ' || a.original_name
             FROM message_attachments a WHERE a.message_id = m.id), '')
@@ -417,6 +434,10 @@ function createChatRouter({ db, requireAuth, realtime }) {
         ON c.type = 'direct' AND peer_member.conversation_id = c.id AND peer_member.user_id <> ?
       LEFT JOIN users peer ON peer.id = peer_member.user_id
       WHERE mine.user_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_hides hidden
+          WHERE hidden.conversation_id = c.id AND hidden.user_id = mine.user_id
+        )
         AND NOT EXISTS (SELECT 1 FROM channels server_channel WHERE server_channel.id = c.id)
         AND (
           c.type = 'group'
@@ -439,9 +460,14 @@ function createChatRouter({ db, requireAuth, realtime }) {
         id: conversation.id,
         type: conversation.type,
         name: conversation.type === 'group' ? conversation.name : conversation.peer_username,
+        iconUrl: conversation.icon_url || '',
+        bannerUrl: conversation.banner_url || '',
         peer: conversation.peer_id ? {
           id: conversation.peer_id,
           username: conversation.peer_username,
+          avatarUrl: conversation.peer_avatar_url || '',
+          about: conversation.peer_about || '',
+          pronouns: conversation.peer_pronouns || '',
           online: realtime.isOnline(conversation.peer_id),
           lastSeenAt: conversation.peer_last_seen
         } : null,
@@ -471,8 +497,8 @@ function createChatRouter({ db, requireAuth, realtime }) {
   router.post('/groups', (req, res) => {
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     const memberIds = Array.isArray(req.body.memberIds) ? req.body.memberIds : [];
-    if (memberIds.length < 2 || memberIds.length > 49 || memberIds.some((id) => typeof id !== 'string' || id.length > 64)) {
-      res.status(400).json({ error: 'Eine Gruppe benötigt 2 bis 49 gültige Nutzer-IDs.' });
+    if (memberIds.length < 1 || memberIds.length > 49 || memberIds.some((id) => typeof id !== 'string' || id.length > 64)) {
+      res.status(400).json({ error: 'Eine Gruppe benötigt 1 bis 49 gültige Nutzer-IDs.' });
       return;
     }
     const requestedMembers = [...new Set(memberIds)];
@@ -480,8 +506,8 @@ function createChatRouter({ db, requireAuth, realtime }) {
       res.status(400).json({ error: 'Der Gruppenname muss 2 bis 60 Zeichen lang sein.' });
       return;
     }
-    if (requestedMembers.length < 2 || requestedMembers.length > 49 || requestedMembers.includes(req.auth.sub)) {
-      res.status(400).json({ error: 'Eine Gruppe benötigt 2 bis 49 weitere Mitglieder.' });
+    if (requestedMembers.length < 1 || requestedMembers.length > 49 || requestedMembers.includes(req.auth.sub)) {
+      res.status(400).json({ error: 'Eine Gruppe benötigt 1 bis 49 weitere Mitglieder.' });
       return;
     }
     const validUsers = db.prepare(`
@@ -518,7 +544,7 @@ function createChatRouter({ db, requireAuth, realtime }) {
       return;
     }
     const group = db.prepare(`
-      SELECT c.id, c.name, own.role AS my_role
+      SELECT c.id, c.name, c.icon_url, c.banner_url, own.role AS my_role
       FROM conversations c
       JOIN conversation_members own ON own.conversation_id = c.id AND own.user_id = ?
       WHERE c.id = ? AND c.type = 'group'
@@ -538,6 +564,8 @@ function createChatRouter({ db, requireAuth, realtime }) {
       group: {
         id: group.id,
         name: group.name,
+        iconUrl: group.icon_url || '',
+        bannerUrl: group.banner_url || '',
         myRole: group.my_role,
         members: members.map((member) => ({
           id: member.id,
@@ -572,6 +600,48 @@ function createChatRouter({ db, requireAuth, realtime }) {
     db.prepare('UPDATE conversations SET name = ? WHERE id = ?').run(name, req.params.id);
     realtime.emitConversation(req.params.id, 'group:updated', { conversationId: req.params.id, name });
     res.json({ name });
+  });
+
+  router.post('/groups/:id/media/:kind', (req, res, next) => {
+    if (!['icon', 'banner'].includes(req.params.kind)) {
+      res.status(404).json({ error: 'Bildtyp nicht gefunden.' });
+      return;
+    }
+    if (!isPrivateGroup(req.params.id)) {
+      res.status(404).json({ error: 'Gruppe nicht gefunden.' });
+      return;
+    }
+    const group = db.prepare(`
+      SELECT c.icon_url, c.banner_url
+      FROM conversations c
+      JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = ?
+      WHERE c.id = ? AND cm.role = 'admin'
+    `).get(req.auth.sub, req.params.id);
+    if (!group) {
+      res.status(403).json({ error: 'Nur Gruppen-Admins können Gruppenbilder ändern.' });
+      return;
+    }
+    req.groupMedia = group;
+    next();
+  }, imageUploadMiddleware, (req, res) => {
+    if (!isValidImage(req.file)) {
+      res.status(400).json({ error: 'Der Dateityp oder Dateiinhalt wird nicht unterstützt.' });
+      return;
+    }
+    const group = req.groupMedia;
+    const image = saveImage(db, req.auth.sub, req.file);
+    const column = req.params.kind === 'icon' ? 'icon_url' : 'banner_url';
+    db.prepare(`UPDATE conversations SET ${column} = ? WHERE id = ?`).run(image.url, req.params.id);
+    deleteImageIfUnreferenced(db, group[column]);
+    const updated = db.prepare('SELECT name, icon_url, banner_url FROM conversations WHERE id = ?').get(req.params.id);
+    const payload = {
+      conversationId: req.params.id,
+      name: updated.name,
+      iconUrl: updated.icon_url || '',
+      bannerUrl: updated.banner_url || ''
+    };
+    realtime.emitConversation(req.params.id, 'group:updated', payload);
+    res.status(201).json({ group: { id: req.params.id, ...payload, myRole: 'admin' } });
   });
 
   router.post('/groups/:id/members', (req, res) => {
@@ -700,6 +770,67 @@ function createChatRouter({ db, requireAuth, realtime }) {
     db.prepare('DELETE FROM conversation_members WHERE conversation_id = ? AND user_id = ?').run(req.params.id, targetId);
     realtime.emitConversation(req.params.id, 'group:member-removed', { conversationId: req.params.id, userId: targetId });
     realtime.removeFromConversation(req.params.id, [targetId]);
+    res.status(204).end();
+  });
+
+  router.delete('/conversations/:id', (req, res) => {
+    if (!isPrivateGroup(req.params.id)) {
+      const direct = db.prepare(`
+        SELECT c.type
+        FROM conversations c
+        JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = ?
+        WHERE c.id = ? AND c.type = 'direct'
+      `).get(req.auth.sub, req.params.id);
+      if (!direct) {
+        res.status(404).json({ error: 'Unterhaltung nicht gefunden oder kann nicht verlassen werden.' });
+        return;
+      }
+      db.prepare(`
+        INSERT INTO conversation_hides (conversation_id, user_id)
+        VALUES (?, ?)
+        ON CONFLICT (conversation_id, user_id) DO UPDATE SET hidden_at = CURRENT_TIMESTAMP
+      `).run(req.params.id, req.auth.sub);
+      realtime.removeFromConversation(req.params.id, [req.auth.sub]);
+      res.status(204).end();
+      return;
+    }
+
+    const membership = db.prepare(`
+      SELECT role FROM conversation_members WHERE conversation_id = ? AND user_id = ?
+    `).get(req.params.id, req.auth.sub);
+    if (!membership) {
+      res.status(404).json({ error: 'Unterhaltung nicht gefunden oder kann nicht verlassen werden.' });
+      return;
+    }
+    const leaveGroup = db.transaction(() => {
+      if (membership.role === 'admin') {
+        const anotherAdmin = db.prepare(`
+          SELECT 1 FROM conversation_members
+          WHERE conversation_id = ? AND user_id <> ? AND role = 'admin'
+        `).get(req.params.id, req.auth.sub);
+        if (!anotherAdmin) {
+          const nextMember = db.prepare(`
+            SELECT user_id FROM conversation_members
+            WHERE conversation_id = ? AND user_id <> ?
+            ORDER BY joined_at ASC, user_id ASC LIMIT 1
+          `).get(req.params.id, req.auth.sub);
+          if (nextMember) {
+            db.prepare(`
+              UPDATE conversation_members SET role = 'admin'
+              WHERE conversation_id = ? AND user_id = ?
+            `).run(req.params.id, nextMember.user_id);
+          }
+        }
+      }
+      db.prepare('DELETE FROM conversation_members WHERE conversation_id = ? AND user_id = ?')
+        .run(req.params.id, req.auth.sub);
+    });
+    leaveGroup();
+    realtime.emitConversation(req.params.id, 'group:member-removed', {
+      conversationId: req.params.id,
+      userId: req.auth.sub
+    });
+    realtime.removeFromConversation(req.params.id, [req.auth.sub]);
     res.status(204).end();
   });
 

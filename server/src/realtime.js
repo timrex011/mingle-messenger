@@ -94,6 +94,10 @@ function initRealtime(server) {
       FROM conversation_members own
       JOIN conversations c ON c.id = own.conversation_id
       WHERE own.user_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_hides hidden
+          WHERE hidden.conversation_id = own.conversation_id AND hidden.user_id = own.user_id
+        )
         AND (
           c.type = 'group'
           OR NOT EXISTS (
@@ -138,6 +142,8 @@ function initRealtime(server) {
         SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?
       `).get(payload.conversationId, userId);
       if (!member) return;
+      if (db.prepare('SELECT 1 FROM conversation_hides WHERE conversation_id = ? AND user_id = ?')
+        .get(payload.conversationId, userId)) return;
       const conversation = db.prepare(`
         SELECT type FROM conversations WHERE id = ?
       `).get(payload.conversationId);

@@ -14,6 +14,12 @@ const { getIpLocation } = require('./geolocation');
 const realtime = require('./realtime');
 const { createChatRouter } = require('./chat');
 const {
+  imageUploadMiddleware,
+  isValidImage,
+  saveImage,
+  deleteImageIfUnreferenced
+} = require('./image-media');
+const {
   bcrypt,
   clearRefreshCookie,
   createAccessToken,
@@ -172,6 +178,8 @@ function publicUser(row) {
     customStatus: row.custom_status || '',
     avatarUrl: row.avatar_url,
     bannerUrl: row.banner_url || '',
+    about: row.about || '',
+    pronouns: row.pronouns || '',
     emailVerified: Boolean(row.email_verified),
     totpEnabled: Boolean(row.totp_enabled),
     isBanned: Boolean(row.is_banned),
@@ -1047,19 +1055,77 @@ userRouter.patch('/status', requireAuth, asyncRoute(async (req, res) => {
 }));
 
 userRouter.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
+  if (req.body.about !== undefined && (typeof req.body.about !== 'string' || req.body.about.trim().length > 500)) {
+    res.status(400).json({ error: 'Dein Beschreibungstext darf höchstens 500 Zeichen lang sein.' });
+    return;
+  }
+  if (req.body.pronouns !== undefined && (typeof req.body.pronouns !== 'string' || req.body.pronouns.trim().length > 40)) {
+    res.status(400).json({ error: 'Pronomen dürfen höchstens 40 Zeichen lang sein.' });
+    return;
+  }
   const avatarUrl = typeof req.body.avatarUrl === 'string' ? req.body.avatarUrl.trim().slice(0, 500) : null;
   const bannerUrl = typeof req.body.bannerUrl === 'string' ? req.body.bannerUrl.trim().slice(0, 500) : null;
+  const about = typeof req.body.about === 'string' ? req.body.about.trim() : null;
+  const pronouns = typeof req.body.pronouns === 'string' ? req.body.pronouns.trim() : null;
   db.prepare(`
     UPDATE users
     SET avatar_url = COALESCE(?, avatar_url),
         banner_url = COALESCE(?, banner_url),
+        about = COALESCE(?, about),
+        pronouns = COALESCE(?, pronouns),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(avatarUrl, bannerUrl, req.auth.sub);
+  `).run(avatarUrl, bannerUrl, about, pronouns, req.auth.sub);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub);
   res.json({ user: publicUser(user) });
 }));
+userRouter.post('/profile/media/:kind', requireAuth, (req, res, next) => {
+  if (!['avatar', 'banner'].includes(req.params.kind)) {
+    res.status(404).json({ error: 'Bildtyp nicht gefunden.' });
+    return;
+  }
+  next();
+}, imageUploadMiddleware, asyncRoute(async (req, res) => {
+  if (!isValidImage(req.file)) {
+    res.status(400).json({ error: 'Der Dateityp oder Dateiinhalt wird nicht unterstützt.' });
+    return;
+  }
+  const current = db.prepare('SELECT avatar_url, banner_url FROM users WHERE id = ?').get(req.auth.sub);
+  const image = saveImage(db, req.auth.sub, req.file);
+  const column = req.params.kind === 'avatar' ? 'avatar_url' : 'banner_url';
+  db.prepare(`UPDATE users SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .run(image.url, req.auth.sub);
+  deleteImageIfUnreferenced(db, current[column]);
+  res.status(201).json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub)) });
+}));
 app.use('/api/users', userRouter);
+
+app.get('/api/media/:id', (req, res, next) => {
+  const asset = db.prepare(`
+    SELECT a.storage_name, a.mime_type
+    FROM image_assets a
+    WHERE a.id = ? AND (
+      EXISTS (SELECT 1 FROM users u WHERE u.avatar_url = '/api/media/' || a.id OR u.banner_url = '/api/media/' || a.id)
+      OR EXISTS (SELECT 1 FROM conversations c WHERE c.icon_url = '/api/media/' || a.id OR c.banner_url = '/api/media/' || a.id)
+      OR EXISTS (SELECT 1 FROM servers s WHERE s.icon_url = '/api/media/' || a.id OR s.banner_url = '/api/media/' || a.id)
+    )
+  `).get(req.params.id);
+  if (!asset) {
+    res.status(404).json({ error: 'Bild nicht gefunden.' });
+    return;
+  }
+  res.set({
+    'Content-Type': asset.mime_type,
+    'Content-Disposition': 'inline',
+    'Cache-Control': 'public, max-age=3600, immutable',
+    'X-Content-Type-Options': 'nosniff'
+  }).sendFile(asset.storage_name, { root: path.join(config.attachmentPath, 'profile-media') }, (error) => {
+    if (error && !res.headersSent) {
+      if (error.code === 'ENOENT') res.status(404).end();
+      else next(error);
+    }
+  });
+});
 
 // Admin & Moderation (Owner, Admin, Moderator)
 const adminRouter = express.Router();
@@ -1325,6 +1391,44 @@ serverRouter.post('/', requireAuth, asyncRoute(async (req, res) => {
     iconUrl,
     defaultChannelId: channelId,
     inviteUrl: `${config.appUrl}/invite/${inviteCode}`
+  });
+}));
+
+serverRouter.patch('/:id', requireAuth, asyncRoute(async (req, res) => {
+  if (!requireServerPermission(req, res, req.params.id, 'manage_server')) return;
+  const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  if (name.length < 2 || name.length > 50) {
+    res.status(400).json({ error: 'Servername muss 2–50 Zeichen lang sein.' });
+    return;
+  }
+  db.prepare('UPDATE servers SET name = ? WHERE id = ?').run(name, req.params.id);
+  const server = db.prepare('SELECT id, name, icon_url, banner_url, owner_id FROM servers WHERE id = ?').get(req.params.id);
+  res.json({ server });
+}));
+
+serverRouter.post('/:id/media/:kind', requireAuth, (req, res, next) => {
+  if (!['icon', 'banner'].includes(req.params.kind)) {
+    res.status(404).json({ error: 'Bildtyp nicht gefunden.' });
+    return;
+  }
+  if (!requireServerPermission(req, res, req.params.id, 'manage_server')) return;
+  next();
+}, imageUploadMiddleware, asyncRoute(async (req, res) => {
+  if (!isValidImage(req.file)) {
+    res.status(400).json({ error: 'Der Dateityp oder Dateiinhalt wird nicht unterstützt.' });
+    return;
+  }
+  const server = db.prepare('SELECT icon_url, banner_url FROM servers WHERE id = ?').get(req.params.id);
+  if (!server) {
+    res.status(404).json({ error: 'Server nicht gefunden.' });
+    return;
+  }
+  const image = saveImage(db, req.auth.sub, req.file);
+  const column = req.params.kind === 'icon' ? 'icon_url' : 'banner_url';
+  db.prepare(`UPDATE servers SET ${column} = ? WHERE id = ?`).run(image.url, req.params.id);
+  deleteImageIfUnreferenced(db, server[column]);
+  res.status(201).json({
+    server: db.prepare('SELECT id, name, icon_url, banner_url, owner_id FROM servers WHERE id = ?').get(req.params.id)
   });
 }));
 

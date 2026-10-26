@@ -23,9 +23,22 @@ async function initTursoSchema() {
     ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'online';
     ALTER TABLE users ADD COLUMN custom_status TEXT;
     ALTER TABLE users ADD COLUMN banner_url TEXT;
+    ALTER TABLE users ADD COLUMN about TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN pronouns TEXT NOT NULL DEFAULT '';
     ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE users ADD COLUMN ban_reason TEXT;
     ALTER TABLE users ADD COLUMN banned_at TIMESTAMP;
+    ALTER TABLE conversations ADD COLUMN icon_url TEXT;
+    ALTER TABLE conversations ADD COLUMN banner_url TEXT;
+
+    CREATE TABLE IF NOT EXISTS image_assets (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      storage_name TEXT NOT NULL UNIQUE,
+      mime_type TEXT NOT NULL CHECK (mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
+      size_bytes INTEGER NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 5242880),
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
 
     CREATE TABLE IF NOT EXISTS servers (
       id TEXT PRIMARY KEY,

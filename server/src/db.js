@@ -32,6 +32,12 @@ if (!userColumns.some((column) => column.name === 'custom_status')) {
 if (!userColumns.some((column) => column.name === 'banner_url')) {
   db.exec("ALTER TABLE users ADD COLUMN banner_url TEXT");
 }
+if (!userColumns.some((column) => column.name === 'about')) {
+  db.exec("ALTER TABLE users ADD COLUMN about TEXT NOT NULL DEFAULT ''");
+}
+if (!userColumns.some((column) => column.name === 'pronouns')) {
+  db.exec("ALTER TABLE users ADD COLUMN pronouns TEXT NOT NULL DEFAULT ''");
+}
 if (!userColumns.some((column) => column.name === 'is_banned')) {
   db.exec("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0");
 }
@@ -112,6 +118,14 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_user_devices_user ON user_devices(user_id);
 `);
+
+const conversationColumns = db.pragma('table_info(conversations)');
+if (!conversationColumns.some((column) => column.name === 'icon_url')) {
+  db.exec('ALTER TABLE conversations ADD COLUMN icon_url TEXT');
+}
+if (!conversationColumns.some((column) => column.name === 'banner_url')) {
+  db.exec('ALTER TABLE conversations ADD COLUMN banner_url TEXT');
+}
 
 const serverMemberColumns = db.pragma('table_info(server_members)');
 if (!serverMemberColumns.some((column) => column.name === 'role_id')) {

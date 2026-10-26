@@ -17,6 +17,7 @@ import {
   Download,
   FileText,
   Hash,
+  ImagePlus,
   LockKeyhole,
   Link2,
   LogOut,
@@ -62,11 +63,11 @@ function Brand({ compact = false }) {
   );
 }
 
-function Avatar({ name = '?', online = false, size = 'normal' }) {
+function Avatar({ name = '?', online = false, size = 'normal', imageUrl = '' }) {
   const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '?';
   return (
     <span className={`avatar avatar-${size}`}>
-      {initials}
+      {imageUrl ? <img src={imageUrl} alt="" /> : initials}
       {online && <i className="online-dot" />}
     </span>
   );
@@ -575,6 +576,8 @@ function SettingsPage({
 }) {
   const [username, setUsername] = useState(user.username);
   const [age, setAge] = useState(String(user.age));
+  const [about, setAbout] = useState(user.about || '');
+  const [pronouns, setPronouns] = useState(user.pronouns || '');
   const [profileTotpCode, setProfileTotpCode] = useState('');
   const [profileChallenge, setProfileChallenge] = useState(null);
   const [profileEmailCode, setProfileEmailCode] = useState('');
@@ -603,6 +606,54 @@ function SettingsPage({
   const [disableChallenge, setDisableChallenge] = useState(null);
   const [disableEmailCode, setDisableEmailCode] = useState('');
 
+  async function savePersonalDetails(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await request('/users/profile', {
+        method: 'PATCH',
+        token,
+        onToken,
+        body: { about, pronouns }
+      });
+      onUserChange(result.user);
+      setMessage('Deine Profilangaben wurden gespeichert.');
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadProfileImage(kind, file) {
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size === 0 || file.size > 5 * 1024 * 1024) {
+      setError('Wähle ein JPG-, PNG- oder WebP-Bild bis 5 MB aus.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const result = await request(`/users/profile/media/${kind}`, {
+        method: 'POST',
+        token,
+        onToken,
+        body
+      });
+      onUserChange(result.user);
+      setMessage(kind === 'avatar' ? 'Profilbild aktualisiert.' : 'Titelbild aktualisiert.');
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveProfile(event) {
     event.preventDefault();
     setBusy(true);
@@ -613,6 +664,7 @@ function SettingsPage({
       if (user.totpEnabled && username !== user.username) {
         body.totpCode = profileTotpCode;
       }
+
       const result = await request('/auth/me', {
         method: 'PATCH',
         token,
@@ -792,7 +844,7 @@ function SettingsPage({
     <div className="settings-page">
       <div className="page-title-row">
         <div><span className="auth-kicker">DEIN KONTO</span><h1>Einstellungen</h1><p>Verwalte dein Profil und deine Sicherheit.</p></div>
-        <Avatar name={user.username} size="large" />
+        <Avatar name={user.username} size="large" imageUrl={user.avatarUrl} />
       </div>
       {(message || error) && <div className={`form-message ${error ? 'error' : 'success'}`} role={error ? 'alert' : 'status'}>{error || message}</div>}
       <NotificationSettings
@@ -805,7 +857,21 @@ function SettingsPage({
         onSoundChange={onNotificationSoundChange}
       />
       <section className="settings-card">
-        <div className="settings-card-title"><span className="settings-icon"><UserRound size={18} /></span><div><h2>Profil &amp; Benutzername</h2><p>Passe deinen Benutzernamen an.</p></div></div>
+        <div className="settings-card-title"><span className="settings-icon"><UserRound size={18} /></span><div><h2>Profil &amp; Benutzername</h2><p>Gestalte, wie andere dich in Mingle kennenlernen.</p></div></div>
+        <div className="profile-media-preview">
+          <div className="profile-cover-preview" style={user.bannerUrl ? { backgroundImage: `url("${user.bannerUrl}")` } : undefined} />
+          <Avatar name={user.username} size="large" imageUrl={user.avatarUrl} />
+          <div className="profile-media-pickers">
+            <label className="button button-secondary"><ImagePlus size={15} /> Profilbild wählen<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { uploadProfileImage('avatar', event.target.files?.[0]); event.target.value = ''; }} /></label>
+            <label className="button button-secondary"><ImagePlus size={15} /> Titelbild wählen<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { uploadProfileImage('banner', event.target.files?.[0]); event.target.value = ''; }} /></label>
+          </div>
+        </div>
+        <p className="media-storage-note">Bilder liegen im lokalen Upload-Speicher dieses Servers. Bei Hosting mit flüchtigem Datenträger können Dateien nach einem Neustart fehlen; die gespeicherten Bildverweise übertragen keine Bilddateien in die Cloud.</p>
+        <form className="settings-form personal-details-form" onSubmit={savePersonalDetails}>
+          <label className="field"><span>Über mich</span><textarea className="plain-input profile-about-input" value={about} onChange={(event) => setAbout(event.target.value)} maxLength="500" rows="3" placeholder="Ein paar Worte über dich …" /></label>
+          <label className="field"><span>Pronomen</span><input className="plain-input" value={pronouns} onChange={(event) => setPronouns(event.target.value)} maxLength="40" placeholder="z. B. sie/ihr" /></label>
+          <button className="button button-dark" disabled={busy}>{busy ? 'Wird gespeichert …' : 'Profilangaben speichern'}</button>
+        </form>
         <form className="settings-form" onSubmit={profileChallenge ? verifyProfileChange : saveProfile}>
           {!profileChallenge && <label className="field"><span>Aktuelle E-Mail</span><input className="plain-input readonly" value={user.email} readOnly /></label>}
           {!profileChallenge && <div className="settings-fields">
@@ -1091,6 +1157,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
   const [serverMembersOpen, setServerMembersOpen] = useState(true);
   const [serverAdminOpen, setServerAdminOpen] = useState(false);
   const [serverAdminTab, setServerAdminTab] = useState('members');
+  const [serverNameDraft, setServerNameDraft] = useState('');
   const [createServerOpen, setCreateServerOpen] = useState(false);
   const [createServerName, setCreateServerName] = useState('');
   const [createServerIcon, setCreateServerIcon] = useState('');
@@ -1433,11 +1500,13 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     socket.on('conversation:created', () => {
       refreshLists().catch((requestError) => setError(requestError.message));
     });
-    socket.on('group:updated', ({ conversationId, name }) => {
+    socket.on('group:updated', ({ conversationId, name, iconUrl, bannerUrl }) => {
       setConversations((current) => current.map((conversation) => conversation.id === conversationId
-        ? { ...conversation, name }
+        ? { ...conversation, name, ...(iconUrl === undefined ? {} : { iconUrl }), ...(bannerUrl === undefined ? {} : { bannerUrl }) }
         : conversation));
-      setGroupDetails((current) => current?.id === conversationId ? { ...current, name } : current);
+      setGroupDetails((current) => current?.id === conversationId
+        ? { ...current, name, ...(iconUrl === undefined ? {} : { iconUrl }), ...(bannerUrl === undefined ? {} : { bannerUrl }) }
+        : current);
       setGroupNameDraft((current) => selectedIdRef.current === conversationId ? name : current);
     });
     socket.on('group:member-added', ({ conversationId }) => {
@@ -2049,6 +2118,47 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     } finally {
       setBusy(false);
     }
+
+    async function saveServerSettings(event) {
+      event.preventDefault();
+      if (!activeServerId) return;
+      try {
+        const result = await request(`/servers/${activeServerId}`, {
+          method: 'PATCH',
+          token,
+          onToken,
+          body: { name: serverNameDraft }
+        });
+        setServerDetail((current) => current ? { ...current, server: { ...current.server, ...result.server } } : current);
+        setServers((current) => current.map((server) => server.id === result.server.id ? { ...server, ...result.server } : server));
+        setInfo('Servereinstellungen gespeichert.');
+      } catch (requestError) {
+        setError(requestError.message);
+      }
+    }
+
+    async function uploadServerMedia(kind, file) {
+      if (!activeServerId || !file) return;
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size === 0 || file.size > 5 * 1024 * 1024) {
+        setError('Wähle ein JPG-, PNG- oder WebP-Bild bis 5 MB aus.');
+        return;
+      }
+      try {
+        const body = new FormData();
+        body.append('file', file);
+        const result = await request(`/servers/${activeServerId}/media/${kind}`, {
+          method: 'POST',
+          token,
+          onToken,
+          body
+        });
+        setServerDetail((current) => current ? { ...current, server: { ...current.server, ...result.server } } : current);
+        setServers((current) => current.map((server) => server.id === activeServerId ? { ...server, ...result.server } : server));
+        setInfo(kind === 'icon' ? 'Serverbild aktualisiert.' : 'Server-Titelbild aktualisiert.');
+      } catch (requestError) {
+        setError(requestError.message);
+      }
+    }
   }
 
   async function createServerChannel(event) {
@@ -2406,7 +2516,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
     const leaving = member.id === user.id;
     if (!window.confirm(leaving ? 'Möchtest du diese Gruppe verlassen?' : `@${member.username} aus der Gruppe entfernen?`)) return;
     try {
-      await request(`/groups/${selected.id}/members/${member.id}`, {
+      await request(leaving ? `/conversations/${selected.id}` : `/groups/${selected.id}/members/${member.id}`, {
         method: 'DELETE',
         token,
         onToken
@@ -2422,6 +2532,31 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
         const result = await request(`/groups/${selected.id}`, { token, onToken });
         setGroupDetails(result.group);
         setInfo(`@${member.username} wurde aus der Gruppe entfernt.`);
+      }
+
+      async function uploadGroupMedia(kind, file) {
+        if (!selected || !file) return;
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size === 0 || file.size > 5 * 1024 * 1024) {
+          setError('Wähle ein JPG-, PNG- oder WebP-Bild bis 5 MB aus.');
+          return;
+        }
+        try {
+          const body = new FormData();
+          body.append('file', file);
+          const result = await request(`/groups/${selected.id}/media/${kind}`, {
+            method: 'POST',
+            token,
+            onToken,
+            body
+          });
+          setGroupDetails((current) => current ? { ...current, ...result.group } : current);
+          setConversations((current) => current.map((conversation) => conversation.id === selected.id
+            ? { ...conversation, iconUrl: result.group.iconUrl, bannerUrl: result.group.bannerUrl }
+            : conversation));
+          setInfo(kind === 'icon' ? 'Gruppenbild aktualisiert.' : 'Gruppen-Titelbild aktualisiert.');
+        } catch (requestError) {
+          setError(requestError.message);
+        }
       }
       await refreshLists();
     } catch (requestError) {
@@ -2539,6 +2674,26 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
           ? { ...item, body: '', deletedAt: new Date().toISOString() }
           : item));
       }
+
+      async function deleteConversation() {
+        if (!selected || !['direct', 'group'].includes(selected.type)) return;
+        const message = selected.type === 'group'
+          ? `Diese Gruppe verlassen? Sie wird nur aus deinen Unterhaltungen entfernt.`
+          : `Chat mit @${selected.name} nur für dich ausblenden? Die andere Person behält ihre Nachrichten.`;
+        if (!window.confirm(message)) return;
+        try {
+          await request(`/conversations/${selected.id}`, { method: 'DELETE', token, onToken });
+          setSelectedId(null);
+          selectedIdRef.current = null;
+          setMessages([]);
+          setGroupDetailsOpen(false);
+          setGroupDetails(null);
+          await refreshLists();
+          setInfo(selected.type === 'group' ? 'Du hast die Gruppe verlassen.' : 'Chat für dich ausgeblendet.');
+        } catch (requestError) {
+          setError(requestError.message);
+        }
+      }
       await refreshLists();
     } catch (requestError) {
       setError(requestError.message);
@@ -2616,7 +2771,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
           <section className="server-channel-sidebar">
             <div className="server-sidebar-actions">
               <button onClick={() => { setServerAdminTab('invites'); setServerAdminOpen(true); }} disabled={!serverPermissions.manage_invites}><UserPlus size={15} /> Einladung</button>
-              <button onClick={() => { setServerAdminTab('members'); setServerAdminOpen(true); }} disabled={!serverPermissions.manage_roles && !serverPermissions.manage_server && !serverPermissions.kick_members}><Settings2 size={15} /> Verwalten</button>
+              <button onClick={() => { setServerNameDraft(activeServer?.name || ''); setServerAdminTab(serverPermissions.manage_server ? 'general' : 'members'); setServerAdminOpen(true); }} disabled={!serverPermissions.manage_roles && !serverPermissions.manage_server && !serverPermissions.kick_members}><Settings2 size={15} /> Verwalten</button>
             </div>
             <div className="server-channel-heading"><span>TEXTKANÄLE</span>{serverPermissions.manage_channels && <button className="icon-button" title="Kanal erstellen" aria-label="Kanal erstellen" onClick={() => setCreateChannelOpen(true)}><Plus size={16} /></button>}</div>
             <div className="server-channel-list">
@@ -2638,7 +2793,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
                 </div>
               ) : visibleConversations.map((conversation) => (
                 <button key={conversation.id} className={`conversation-item ${selectedId === conversation.id ? 'selected' : ''}`} onClick={() => selectConversation(conversation)}>
-                  <Avatar name={conversation.name || 'Gruppe'} online={conversation.peer?.online} />
+                  <Avatar name={conversation.name || 'Gruppe'} online={conversation.peer?.online} imageUrl={conversation.type === 'direct' ? conversation.peer?.avatarUrl : conversation.iconUrl} />
                   <span className="conversation-info"><b>{conversation.name}</b><small>{conversation.lastMessage || (conversation.type === 'group' ? 'Gruppenchat' : 'Noch keine Nachrichten')}</small></span>
                   <span className="conversation-side"><time>{messageTime(conversation.lastMessageAt)}</time>{conversation.unreadCount > 0 && <i>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</i>}</span>
                 </button>
@@ -2668,14 +2823,14 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
             {friendships.outgoing.length > 0 && <div className="contact-group"><span className="contact-group-title">AUSSTEHEND</span>{friendships.outgoing.map((friend) => <div className="contact-item" key={friend.id}><Avatar name={friend.user.username} /><span><b>@{friend.user.username}</b><small>Anfrage gesendet</small></span><button className="contact-action muted" title="Anfrage zurückziehen" onClick={() => removeFriendship(friend)}><X size={16} /></button></div>)}</div>}
             <div className="contact-group">
               <span className="contact-group-title">KONTAKTE <i>{friendships.accepted.length}</i></span>
-              {friendships.accepted.length === 0 ? <p className="search-hint">Deine angenommenen Kontakte erscheinen hier.</p> : friendships.accepted.map((friend) => <div className="contact-item" key={friend.id}><Avatar name={friend.user.username} online={friend.user.online} /><button className="contact-name" onClick={() => openFriend(friend)}><b>@{friend.user.username}</b><small>{friend.user.online ? 'Online' : 'Kontakt'}</small></button><button className="contact-action" title="Chat öffnen" onClick={() => openFriend(friend)}><MessageCircle size={16} /></button><button className="contact-action muted" title="Kontakt entfernen" onClick={() => removeFriendship(friend)}><UserX size={16} /></button></div>)}
+              {friendships.accepted.length === 0 ? <p className="search-hint">Deine angenommenen Kontakte erscheinen hier.</p> : friendships.accepted.map((friend) => <div className="contact-item" key={friend.id}><Avatar name={friend.user.username} online={friend.user.online} imageUrl={friend.user.avatarUrl} /><button className="contact-name" onClick={() => openFriend(friend)}><b>@{friend.user.username}</b><small>{[friend.user.pronouns, friend.user.about].filter(Boolean).join(' · ') || (friend.user.online ? 'Online' : 'Kontakt')}</small></button><button className="contact-action" title="Chat öffnen" onClick={() => openFriend(friend)}><MessageCircle size={16} /></button><button className="contact-action muted" title="Kontakt entfernen" onClick={() => removeFriendship(friend)}><UserX size={16} /></button><button className="contact-action muted" title={`@${friend.user.username} blockieren`} onClick={() => blockUser(friend.user)}><Ban size={16} /></button></div>)}
             </div>
             {blocks.length > 0 && <div className="contact-group"><span className="contact-group-title">BLOCKIERT</span>{blocks.map((block) => <div className="contact-item" key={block.id}><Avatar name={block.username} /><span><b>@{block.username}</b><small>Blockiert</small></span><button className="contact-action muted" title="Entblocken" onClick={() => unblockUser(block)}><Ban size={16} /></button></div>)}</div>}
           </div>
         )}
         <div className="sidebar-bottom">
           <button className="profile-row" onClick={() => setSection('settings')}>
-            <Avatar name={user.username} online />
+            <Avatar name={user.username} online imageUrl={user.avatarUrl} />
             <span className="profile-meta"><b>{user.username}</b><small>Mein Profil</small></span>
             <ChevronDown size={16} />
           </button>
@@ -2699,6 +2854,7 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
             />
             <span className="secure-label"><ShieldCheck size={15} /> Sicher verbunden</span>
             {selected?.peer && <button className="icon-button block-button" title="Kontakt blockieren" aria-label="Kontakt blockieren" onClick={() => blockUser(selected.peer)}><Ban size={17} /></button>}
+            {selected && ['direct', 'group'].includes(selected.type) && <button className="icon-button conversation-hide-button" title={selected.type === 'group' ? 'Gruppe verlassen' : 'Chat für mich ausblenden'} aria-label={selected.type === 'group' ? 'Gruppe verlassen' : 'Chat für mich ausblenden'} onClick={deleteConversation}><Trash2 size={17} /></button>}
             {selected?.type === 'server-channel' && <button className="icon-button server-member-toggle" title="Mitglieder anzeigen" aria-label="Mitglieder anzeigen" onClick={() => setServerMembersOpen((open) => !open)}><UsersRound size={17} /></button>}
             <button className="icon-button theme-toggle" onClick={onThemeToggle} title={theme === 'light' ? 'Dunkles Design' : 'Helles Design'} aria-label="Design wechseln">{theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}</button>
           </div>
@@ -2784,6 +2940,15 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
             {groupDetailsOpen && selected.type === 'group' && <aside className="group-details-panel">
               <div className="group-details-heading"><div><span className="auth-kicker">GRUPPE</span><h3>Mitglieder & Verwaltung</h3></div><button className="icon-button" aria-label="Gruppendetails schließen" onClick={() => setGroupDetailsOpen(false)}><X size={17} /></button></div>
               {!groupDetails ? <div className="attachment-loading">Gruppendaten werden geladen …</div> : <>
+                <div className="group-media-preview">
+                  <div className="group-cover-preview" style={groupDetails.bannerUrl ? { backgroundImage: `url("${groupDetails.bannerUrl}")` } : undefined} />
+                  <Avatar name={groupDetails.name} imageUrl={groupDetails.iconUrl} size="large" />
+                </div>
+                {groupDetails.myRole === 'admin' && <div className="profile-media-pickers group-media-pickers">
+                  <label className="button button-secondary"><ImagePlus size={15} /> Gruppenbild wählen<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { uploadGroupMedia('icon', event.target.files?.[0]); event.target.value = ''; }} /></label>
+                  <label className="button button-secondary"><ImagePlus size={15} /> Titelbild wählen<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { uploadGroupMedia('banner', event.target.files?.[0]); event.target.value = ''; }} /></label>
+                </div>}
+                {groupDetails.myRole === 'admin' && <p className="media-storage-note">Lokale Serverdateien: bei flüchtigem Hosting-Speicher können Bilder nach einem Neustart fehlen.</p>}
                 {groupDetails.myRole === 'admin' && <form className="group-rename-form" onSubmit={saveGroupName}>
                   <label className="field"><span>Gruppenname</span><input className="plain-input" value={groupNameDraft} onChange={(event) => setGroupNameDraft(event.target.value)} minLength="2" maxLength="60" required /></label>
                   <button className="button button-primary" disabled={groupNameDraft.trim() === groupDetails.name}>Speichern</button>
@@ -2893,10 +3058,27 @@ function ChatWorkspace({ user, token, onUserChange, onToken, onLogout, theme, on
           <section className="server-dialog server-admin-dialog" role="dialog" aria-modal="true" aria-labelledby="server-admin-title">
             <div className="server-dialog-heading"><div><span className="auth-kicker">SERVER EINSTELLUNGEN</span><h2 id="server-admin-title">{activeServer.name}</h2><p>Mitglieder, Rollen und Einladungen an einem Ort.</p></div><button className="icon-button" aria-label="Schließen" onClick={() => setServerAdminOpen(false)}><X size={18} /></button></div>
             <nav className="server-admin-tabs" aria-label="Serververwaltung">
+              {serverPermissions.manage_server && <button className={serverAdminTab === 'general' ? 'active' : ''} onClick={() => { setServerNameDraft(activeServer.name); setServerAdminTab('general'); }}><Settings2 size={15} /> Allgemein</button>}
               {(serverPermissions.manage_roles || serverPermissions.kick_members || serverPermissions.manage_server) && <button className={serverAdminTab === 'members' ? 'active' : ''} onClick={() => setServerAdminTab('members')}><UsersRound size={15} /> Mitglieder</button>}
               {serverPermissions.manage_roles && <button className={serverAdminTab === 'roles' ? 'active' : ''} onClick={() => setServerAdminTab('roles')}><ShieldCheck size={15} /> Rollen</button>}
               {serverPermissions.manage_invites && <button className={serverAdminTab === 'invites' ? 'active' : ''} onClick={() => setServerAdminTab('invites')}><UserPlus size={15} /> Einladungen</button>}
             </nav>
+            {serverAdminTab === 'general' && serverPermissions.manage_server && <div className="server-admin-content">
+              <div className="server-admin-section-title"><div><b>Serverdarstellung</b><small>Änderungen werden für alle Mitglieder sichtbar.</small></div></div>
+              <div className="server-media-preview">
+                <div className="server-cover-preview" style={activeServer.banner_url ? { backgroundImage: `url("${activeServer.banner_url}")` } : undefined} />
+                <span className="server-media-icon">{activeServer.icon_url?.startsWith('emoji:') ? activeServer.icon_url.slice(6) : activeServer.icon_url ? <img src={activeServer.icon_url} alt="" /> : activeServer.name.slice(0, 1).toUpperCase()}</span>
+                <div className="profile-media-pickers">
+                  <label className="button button-secondary"><ImagePlus size={15} /> Serverbild wählen<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { uploadServerMedia('icon', event.target.files?.[0]); event.target.value = ''; }} /></label>
+                  <label className="button button-secondary"><ImagePlus size={15} /> Titelbild wählen<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { uploadServerMedia('banner', event.target.files?.[0]); event.target.value = ''; }} /></label>
+                </div>
+              </div>
+              <p className="media-storage-note">Bilder werden auf dem lokalen Server-Datenträger gespeichert. Ohne dauerhaftes Hosting-Volume können die Dateien nach einem Neustart fehlen.</p>
+              <form className="server-form server-settings-form" onSubmit={saveServerSettings}>
+                <label className="field"><span>Servername</span><input className="plain-input" value={serverNameDraft} onChange={(event) => setServerNameDraft(event.target.value)} minLength="2" maxLength="50" required /></label>
+                <button className="button button-primary" disabled={serverNameDraft.trim() === activeServer.name}>Änderungen speichern</button>
+              </form>
+            </div>}
             {serverAdminTab === 'members' && <div className="server-admin-content">
               <div className="server-admin-section-title"><div><b>Servermitglieder</b><small>Rollen gelten nur für diesen Server.</small></div><span>{serverMembers.length}</span></div>
               {serverMembers.map((member) => <div className="server-admin-member" key={member.id}>
